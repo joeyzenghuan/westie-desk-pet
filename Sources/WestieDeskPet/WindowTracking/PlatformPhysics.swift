@@ -299,6 +299,32 @@ public enum PlatformPhysics {
         )
     }
 
+    /// Computes the active-window companionship layout for a single already-known frontmost window frame in O(1).
+    /// Used by the 60/120Hz fast-path tracker while the user drags or resizes the active window!
+    public static func computeSingleWindowPerchLayout(
+        windowID: UInt32,
+        ownerName: String,
+        windowFrame: CGRect,
+        screenSize: CGSize,
+        visibleScreenFrame: CGRect
+    ) -> ActiveWindowPerchLayout {
+        let raw = RawWindowInfo(
+            windowID: windowID,
+            ownerPID: 0,
+            ownerName: ownerName,
+            layer: 0,
+            alpha: 1.0,
+            frame: windowFrame,
+            isFrontmostApp: true
+        )
+        return computeActiveWindowPerchLayout(
+            windowsFrontToBack: [raw],
+            screenSize: screenSize,
+            visibleScreenFrame: visibleScreenFrame,
+            excludedPID: -1
+        )
+    }
+
     /// Computes the active-window companionship layout:
     /// - Full-screen Space or maximized window -> `screenRightPeek` (peeking inward from right screen edge)
     /// - Normal active window -> `topPerch` (`正上方`, right of traffic lights) and/or `windowRightPeek` (`右侧` upper-right border)

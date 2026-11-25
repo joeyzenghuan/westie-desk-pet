@@ -133,6 +133,47 @@ public enum SelfTestRunner {
         let ctxMenu = scene.buildDogContextMenu()
         expect(ctxMenu.items.count >= 8, "Right-click context menu constructs rich menu items reliably")
 
+        // 10. v0.3 Silky Smoothness: DampedSpring, Tap-vs-Drag Zero-Jump, & O(1) Single-Window Layout
+        var spring = DampedSpring(value: 0, target: 1.0, stiffness: 320, damping: 22)
+        var peakVal: CGFloat = 0
+        for _ in 0..<120 {
+            spring.step(dt: 1.0 / 120.0)
+            peakVal = max(peakVal, spring.value)
+        }
+        expect(peakVal > 1.01 && spring.isSettled && abs(spring.value - 1.0) < 0.002, "DampedSpring exhibits lively overshoot and settles cleanly to target")
+
+        let fastLayout = PlatformPhysics.computeSingleWindowPerchLayout(
+            windowID: 101,
+            ownerName: "Code",
+            windowFrame: CGRect(x: 260, y: 315, width: 400, height: 420),
+            screenSize: CGSize(width: 1440, height: 932),
+            visibleScreenFrame: screen
+        )
+        expect(fastLayout.topPerch?.y == 735 && fastLayout.windowRightPeek?.edgeX == 660, "O(1) single-window fast refresh tracks live window top & right edges")
+
+        let companion = CompanionController()
+        let dummySnap = ActiveWorkspaceSnapshot(
+            platforms: platforms,
+            perchLayout: normalLayout,
+            frontmostAppName: "Code",
+            frontmostBundleID: "com.microsoft.VSCode",
+            isMeetingActive: false,
+            isCodingActive: true
+        )
+        companion.placeInitially(snapshot: dummySnap, sceneSize: CGSize(width: 1440, height: 932))
+        let initialDogPos = companion.position
+        let clickPt = CGPoint(x: initialDogPos.x + 6, y: initialDogPos.y + 24)
+        let didPress = companion.handleMouseDown(at: clickPt)
+        let zeroJumpOnDown = (companion.position == initialDogPos && companion.state != .dragged)
+        companion.handleMouseDragged(to: CGPoint(x: clickPt.x + 2, y: clickPt.y + 1)) // < 4pt micro-jitter
+        let stillNotDragged = (companion.state != .dragged && companion.position == initialDogPos)
+        companion.handleMouseUp(at: clickPt, snapshot: dummySnap, sceneSize: CGSize(width: 1440, height: 932))
+        expect(didPress && zeroJumpOnDown && stillNotDragged && !companion.isPointerDownOnDog, "Clicking Westie (< 4pt movement) triggers tactile bounce with zero position jump")
+
+        _ = companion.handleMouseDown(at: clickPt)
+        companion.handleMouseDragged(to: CGPoint(x: clickPt.x + 18, y: clickPt.y + 12)) // >= 4pt intentional drag
+        expect(companion.state == .dragged, "Dragging past 4pt threshold smoothly transitions Westie into scruff-carry")
+
         print("Self-test summary: \(passed) passed, \(failed) failed.")
         return failed == 0
     }

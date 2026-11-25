@@ -37,19 +37,37 @@ public final class CompanionController {
 
     public var onRequestStartTennis: (() -> Void)?
 
-    private var position: CGPoint = CGPoint(x: 520, y: 420)
+    public static let dragStartThreshold: CGFloat = 4.0
+
+    public private(set) var position: CGPoint = CGPoint(x: 520, y: 420)
     private var facingDirection: CGFloat = 1.0
     private var walkAnimTimer: TimeInterval = 0
     private var walkFrameToggle: Bool = false
+    private var currentWalkSpeed: CGFloat = 0
     private var breathPhase: CGFloat = 0
     private var hoverWavePhase: CGFloat = 0
 
-    // Hover tracking (smooth, silent, non-intrusive)
-    private var isHoveringDog: Bool = false
-    private var peekHoverProgress: CGFloat = 0.0
+    // Hover & tactile press/drag tracking
+    public private(set) var isHoveringDog: Bool = false
+    public private(set) var isPointerDownOnDog: Bool = false
+    private var isPeekHoverTextureActive: Bool = false
+    private var pressStartScenePoint: CGPoint = .zero
+    private var dragGrabOffset: CGPoint = .zero
+    private var dragBlendProgress: CGFloat = 0
+    private var lastDragScenePoint: CGPoint = .zero
+    private var smoothedDragVelocityX: CGFloat = 0
+    private var calmTapPoseIndex: Int = 0
+
+    // Second-order damped springs for silky organic feel
+    private var peekHoverSpring = DampedSpring(value: 0, velocity: 0, target: 0, stiffness: 235, damping: 17.5)
+    private var peekEmergeSpring = DampedSpring(value: 0, velocity: 0, target: 0, stiffness: 195, damping: 18.5)
+    private var squashSpring = DampedSpring(value: 0, velocity: 0, target: 0, stiffness: 320, damping: 15.5)
+    private var tapHopSpring = DampedSpring(value: 0, velocity: 0, target: 0, stiffness: 340, damping: 16.5)
+    private var swingRotationSpring = DampedSpring(value: 0, velocity: 0, target: 0, stiffness: 190, damping: 13.5)
 
     // Active window & edge offset tracking
-    private var trackedWindowID: UInt32 = 0
+    public private(set) var trackedWindowID: UInt32 = 0
+    private var lastTrackedWindowFrame: CGRect?
     private var offsetFromWindowMinX: CGFloat = 240
     private var offsetFromWindowMaxY: CGFloat = 68
     private var screenRightCustomYRatio: CGFloat = 0.66
@@ -66,7 +84,12 @@ public final class CompanionController {
         state.isHighFrameRateNeeded
             || treatNode != nil
             || isHoveringDog
-            || (peekHoverProgress > 0.01 && peekHoverProgress < 0.99)
+            || isPointerDownOnDog
+            || !peekHoverSpring.isSettled
+            || !peekEmergeSpring.isSettled
+            || !squashSpring.isSettled
+            || !tapHopSpring.isSettled
+            || !swingRotationSpring.isSettled
     }
 
     public init() {
@@ -240,21 +263,37 @@ public final class CompanionController {
             }
         case .windowRightPeek:
             if let right = layout.windowRightPeek {
-                beginSmoothGlide(to: CGPoint(x: right.edgeX, y: right.defaultY), targetZone: .windowRightPeek, layout: layout)
+                emergeIntoRightPeek(
+                    anchor: right,
+                    targetY: right.defaultY,
+                    zone: .windowRightPeek,
+                    layout: layout
+                )
             } else {
-                snapToScreenRightPeek(layout.screenRightPeek, sceneSize: sceneSize)
+                emergeIntoRightPeek(
+                    anchor: layout.screenRightPeek,
+                    targetY: layout.screenRightPeek.clampedY(sceneSize.height * screenRightCustomYRatio),
+                    zone: .screenRightPeek,
+                    layout: layout
+                )
             }
         case .screenRightPeek:
             let y = layout.screenRightPeek.clampedY(sceneSize.height * screenRightCustomYRatio)
-            beginSmoothGlide(to: CGPoint(x: layout.screenRightPeek.edgeX, y: y), targetZone: .screenRightPeek, layout: layout)
+            emergeIntoRightPeek(
+                anchor: layout.screenRightPeek,
+                targetY: y,
+                zone: .screenRightPeek,
+                layout: layout
+            )
         }
     }
 
     public func dropBoneTreat(snapshot: ActiveWorkspaceSnapshot, sceneSize: CGSize) {
         let layout = snapshot.perchLayout
         guard let top = layout.topPerch else {
-            // In fullscreen / right-peek mode, give a quick happy peek wave without cluttering screen
-            peekHoverProgress = 1.0
+            // In fullscreen / right-peek mode, give a springy happy peek wave without cluttering screen
+            peekHoverSpring.impulse(3.2)
+            squashSpring.impulse(2.0)
             return
         }
 
@@ -282,13 +321,22 @@ public final class CompanionController {
             SKAction.moveBy(x: 0, y: -10, duration: 0.13)
         ]))
         treatNode = node
+        squashSpring.impulse(1.8)
         state = .chasingTreat(treatX: treatX)
     }
 
-    /// Updates continuous hover state without intrusive hearts or shaking!
+    /// Updates continuous hover state with spring physics and zero intrusive popups!
     public func setHovering(_ hovering: Bool) {
         guard isHoveringDog != hovering else { return }
         isHoveringDog = hovering
+        peekHoverSpring.target = hovering ? 1.0 : 0.0
+        if hovering {
+            if perchZone == .screenRightPeek || perchZone == .windowRightPeek {
+                squashSpring.impulse(1.2)
+            } else if state.isGrounded {
+                squashSpring.impulse(0.8)
+            }
+        }
     }
 
     public func handleMouseDown(at scenePoint: CGPoint) -> Bool {
@@ -300,25 +348,68 @@ public final class CompanionController {
             onRequestStartTennis?()
             return true
         }
-        guard interactiveHitRect().contains(scenePoint) else { return false }
-        state = .dragged
-        treatNode?.removeFromParent()
-        treatNode = nil
-        position = CGPoint(x: scenePoint.x, y: scenePoint.y - 24)
+        guard interactiveHitRect().insetBy(dx: -4, dy: -4).contains(scenePoint) else { return false }
+
+        // Record exact grab offset WITHOUT teleporting Westie! Drag only begins past 4pt threshold.
+        isPointerDownOnDog = true
+        pressStartScenePoint = scenePoint
+        lastDragScenePoint = scenePoint
+        dragGrabOffset = CGPoint(x: position.x - scenePoint.x, y: position.y - scenePoint.y)
+        dragBlendProgress = 0
+        smoothedDragVelocityX = 0
+        squashSpring.target = -0.11
         return true
     }
 
     public func handleMouseDragged(to scenePoint: CGPoint) {
-        guard case .dragged = state else { return }
-        let dx = scenePoint.x - position.x
-        if abs(dx) > 1.5 {
+        guard isPointerDownOnDog else { return }
+
+        if state != .dragged {
+            let movedDist = hypot(scenePoint.x - pressStartScenePoint.x, scenePoint.y - pressStartScenePoint.y)
+            guard movedDist >= Self.dragStartThreshold else { return }
+
+            // Crossed drag threshold -> smoothly lift Westie by the scruff!
+            state = .dragged
+            treatNode?.removeFromParent()
+            treatNode = nil
+            squashSpring.target = 0
+            squashSpring.impulse(2.3)
+        }
+
+        let dx = scenePoint.x - lastDragScenePoint.x
+        lastDragScenePoint = scenePoint
+
+        smoothedDragVelocityX = smoothedDragVelocityX * 0.62 + (dx * 60.0) * 0.38
+        swingRotationSpring.target = min(max(-smoothedDragVelocityX * 0.00055, -0.30), 0.30)
+
+        if abs(dx) > 1.2 {
             facingDirection = dx > 0 ? 1.0 : -1.0
         }
-        position = CGPoint(x: scenePoint.x, y: scenePoint.y - 24)
+
+        // Smoothly ease grab anchor from exact click point toward natural scruff hold (zero frame-1 snap!)
+        dragBlendProgress = min(1.0, dragBlendProgress + 0.14)
+        let naturalScruffOffset = CGPoint(x: 0, y: -22)
+        let blendedOffset = CGPoint(
+            x: dragGrabOffset.x + (naturalScruffOffset.x - dragGrabOffset.x) * dragBlendProgress,
+            y: dragGrabOffset.y + (naturalScruffOffset.y - dragGrabOffset.y) * dragBlendProgress
+        )
+        position = CGPoint(x: scenePoint.x + blendedOffset.x, y: scenePoint.y + blendedOffset.y)
     }
 
     public func handleMouseUp(at scenePoint: CGPoint, snapshot: ActiveWorkspaceSnapshot?, sceneSize: CGSize) {
-        guard case .dragged = state else { return }
+        guard isPointerDownOnDog || state == .dragged else { return }
+        let wasDragging = (state == .dragged)
+        isPointerDownOnDog = false
+        squashSpring.target = 0
+        swingRotationSpring.target = 0
+        smoothedDragVelocityX = 0
+
+        // Tap / Gentle Pet (< 4pt movement): respond with a lively tactile spring bounce instead of dropping!
+        if !wasDragging {
+            handleGentleTap()
+            return
+        }
+
         guard let layout = snapshot?.perchLayout else {
             state = .idle(remaining: 5.0)
             return
@@ -348,7 +439,7 @@ public final class CompanionController {
             let pt = CGPoint(x: right.edgeX, y: targetY)
             candidates.append((hypot(scenePoint.x - pt.x, scenePoint.y - pt.y), pt, .windowRightPeek))
         }
-        if scenePoint.x >= sceneSize.width - 72 {
+        if scenePoint.x >= sceneSize.width - 108 {
             let anchor = layout.screenRightPeek
             let clampedY = anchor.clampedY(scenePoint.y)
             if sceneSize.height > 100 {
@@ -369,6 +460,27 @@ public final class CompanionController {
         }
     }
 
+    private func handleGentleTap() {
+        if perchZone == .screenRightPeek || perchZone == .windowRightPeek {
+            peekHoverSpring.impulse(3.0)
+            squashSpring.impulse(2.1)
+            return
+        }
+
+        // Gentle Q-bounce hop + cycle through calm companion poses on top bar
+        tapHopSpring.impulse(135.0)
+        squashSpring.impulse(2.5)
+        if !forceQuietSleep {
+            calmTapPoseIndex = (calmTapPoseIndex + 1) % 4
+            switch calmTapPoseIndex {
+            case 0: state = .sitCalm(remaining: 9.0)
+            case 1: state = .loafing(remaining: 11.0)
+            case 2: state = .chinRest(remaining: 10.0)
+            default: state = .idle(remaining: 7.0)
+            }
+        }
+    }
+
     // MARK: - Frame Update
 
     public func update(dt: TimeInterval, snapshot: ActiveWorkspaceSnapshot, sceneSize: CGSize) {
@@ -376,14 +488,28 @@ public final class CompanionController {
         breathPhase += CGFloat(clampedDt) * 2.2
         zoneStayTimer += clampedDt
 
-        // Smooth peek slide animation on hover (0 -> 1 in ~0.16s, 1 -> 0 in ~0.22s)
-        let targetHover: CGFloat = isHoveringDog ? 1.0 : 0.0
-        if peekHoverProgress < targetHover {
-            peekHoverProgress = min(1.0, peekHoverProgress + CGFloat(clampedDt) * 6.2)
-        } else if peekHoverProgress > targetHover {
-            peekHoverProgress = max(0.0, peekHoverProgress - CGFloat(clampedDt) * 4.5)
+        let layout = snapshot.perchLayout
+        updateWindowMotionInertia(layout: layout, dt: clampedDt)
+
+        // Step all physical springs
+        peekHoverSpring.target = isHoveringDog ? 1.0 : 0.0
+        peekHoverSpring.step(dt: clampedDt)
+        peekEmergeSpring.step(dt: clampedDt)
+        squashSpring.step(dt: clampedDt)
+        tapHopSpring.step(dt: clampedDt)
+        if state != .dragged {
+            smoothedDragVelocityX *= 0.78
         }
-        if peekHoverProgress > 0.05 {
+        swingRotationSpring.step(dt: clampedDt)
+
+        // Hysteresis on peek texture swap avoids rapid edge flicker
+        if peekHoverSpring.value >= 0.44 {
+            isPeekHoverTextureActive = true
+        } else if peekHoverSpring.value <= 0.28 {
+            isPeekHoverTextureActive = false
+        }
+
+        if peekHoverSpring.value > 0.04 {
             hoverWavePhase += CGFloat(clampedDt)
         } else {
             hoverWavePhase = 0
@@ -393,7 +519,6 @@ public final class CompanionController {
             focusAccumulator += clampedDt
         }
 
-        let layout = snapshot.perchLayout
         reconcileWithActiveWindow(layout: layout, sceneSize: sceneSize)
 
         let shouldInvite = focusAccumulator >= focusInviteInterval
@@ -411,24 +536,45 @@ public final class CompanionController {
         syncVisuals(dt: clampedDt)
     }
 
+    private func updateWindowMotionInertia(layout: ActiveWindowPerchLayout, dt: TimeInterval) {
+        defer {
+            lastTrackedWindowFrame = (layout.activeWindowID == trackedWindowID) ? layout.activeWindowFrame : nil
+        }
+        guard state != .dragged,
+              layout.activeWindowID == trackedWindowID,
+              let prevFrame = lastTrackedWindowFrame,
+              let curFrame = layout.activeWindowFrame,
+              dt > 0.0005
+        else {
+            if state != .dragged {
+                swingRotationSpring.target = 0
+            }
+            return
+        }
+
+        let winVelX = (curFrame.minX - prevFrame.minX) / CGFloat(dt)
+        if abs(winVelX) > 8.0 {
+            // Subtle inertial lean while riding on a user-dragged window!
+            swingRotationSpring.target = min(max(-winVelX * 0.00015, -0.085), 0.085)
+        } else {
+            swingRotationSpring.target = 0
+        }
+    }
+
     // MARK: - Active Window & Fullscreen Perch Tracking
 
     private func reconcileWithActiveWindow(layout: ActiveWindowPerchLayout, sceneSize: CGSize) {
         if case .dragged = state { return }
         if case .gliding = state { return }
 
-        // 1. Fullscreen Space or maximized window -> always peek from right edge of screen!
+        // 1. Fullscreen Space or maximized window -> smoothly emerge from right edge of screen!
         if layout.isFullScreenMode {
             let anchor = layout.screenRightPeek
             let desiredY = anchor.clampedY(sceneSize.height * screenRightCustomYRatio)
             if perchZone != .screenRightPeek {
                 treatNode?.removeFromParent()
                 treatNode = nil
-                beginSmoothGlide(
-                    to: CGPoint(x: anchor.edgeX, y: desiredY),
-                    targetZone: .screenRightPeek,
-                    layout: layout
-                )
+                emergeIntoRightPeek(anchor: anchor, targetY: desiredY, zone: .screenRightPeek, layout: layout)
             } else {
                 currentRightAnchor = anchor
                 position = CGPoint(x: anchor.edgeX, y: desiredY)
@@ -445,11 +591,12 @@ public final class CompanionController {
             treatNode?.removeFromParent()
             treatNode = nil
             trackedWindowID = activeID
+            lastTrackedWindowFrame = layout.activeWindowFrame
             transitionToActiveWindowPreferredSpot(layout: layout, sceneSize: sceneSize)
             return
         }
 
-        // 3. Same active window: keep Westie locked smoothly to the window's top or right border as it moves/resizes!
+        // 3. Same active window: locked at 60/120Hz to live window top or right border!
         switch perchZone {
         case .windowTop:
             if let top = layout.topPerch {
@@ -461,14 +608,10 @@ public final class CompanionController {
                     treat.position.x = top.clampedX(treat.position.x, margin: 20)
                 }
             } else if let right = layout.windowRightPeek {
-                // Window moved up to touch menu bar -> smoothly move to its right border!
+                // Window moved up to touch menu bar -> smoothly peek out from its right border!
                 treatNode?.removeFromParent()
                 treatNode = nil
-                beginSmoothGlide(
-                    to: CGPoint(x: right.edgeX, y: right.defaultY),
-                    targetZone: .windowRightPeek,
-                    layout: layout
-                )
+                emergeIntoRightPeek(anchor: right, targetY: right.defaultY, zone: .windowRightPeek, layout: layout)
             } else {
                 snapToScreenRightPeek(layout.screenRightPeek, sceneSize: sceneSize)
             }
@@ -480,7 +623,7 @@ public final class CompanionController {
                 position = CGPoint(x: right.edgeX, y: desiredY)
                 currentRightAnchor = right
             } else if let top = layout.topPerch {
-                // Window moved flush to right edge of screen -> move onto its top border!
+                // Window moved flush to right edge of screen -> hop onto its top border!
                 let x = top.clampedX(top.minX + top.width * 0.65, margin: 20)
                 beginSmoothGlide(to: CGPoint(x: x, y: top.y), targetZone: .windowTop, layout: layout)
             } else {
@@ -496,18 +639,43 @@ public final class CompanionController {
 
     private func transitionToActiveWindowPreferredSpot(layout: ActiveWindowPerchLayout, sceneSize: CGSize) {
         if perchPreference == .rightPeek, let right = layout.windowRightPeek {
-            beginSmoothGlide(to: CGPoint(x: right.edgeX, y: right.defaultY), targetZone: .windowRightPeek, layout: layout)
+            emergeIntoRightPeek(anchor: right, targetY: right.defaultY, zone: .windowRightPeek, layout: layout)
         } else if let top = layout.topPerch {
-            // Land on upper-middle/right portion of active window's top edge (away from traffic lights)
             let preferredX = top.clampedX(top.minX + top.width * 0.62, margin: 22)
+            // If emerging from screen/window right peek near the same corner, hop smoothly onto the top edge!
             beginSmoothGlide(to: CGPoint(x: preferredX, y: top.y), targetZone: .windowTop, layout: layout)
         } else if let right = layout.windowRightPeek {
-            beginSmoothGlide(to: CGPoint(x: right.edgeX, y: right.defaultY), targetZone: .windowRightPeek, layout: layout)
+            emergeIntoRightPeek(anchor: right, targetY: right.defaultY, zone: .windowRightPeek, layout: layout)
         } else {
             let anchor = layout.screenRightPeek
             let desiredY = anchor.clampedY(sceneSize.height * screenRightCustomYRatio)
-            beginSmoothGlide(to: CGPoint(x: anchor.edgeX, y: desiredY), targetZone: .screenRightPeek, layout: layout)
+            emergeIntoRightPeek(anchor: anchor, targetY: desiredY, zone: .screenRightPeek, layout: layout)
         }
+    }
+
+    /// Slides Westie's cute head smoothly out from behind a right window/screen border with spring overshoot (zero pop!).
+    private func emergeIntoRightPeek(
+        anchor: RightEdgeAnchor,
+        targetY: CGFloat,
+        zone: PerchZone,
+        layout: ActiveWindowPerchLayout
+    ) {
+        trackedWindowID = layout.activeWindowID ?? trackedWindowID
+        let clampedY = anchor.clampedY(targetY)
+        if zone == .windowRightPeek {
+            let winMaxY = layout.activeWindowFrame?.maxY ?? anchor.maxY
+            snapToWindowRightPeek(anchor, windowMaxY: winMaxY, customY: clampedY)
+        } else {
+            perchZone = .screenRightPeek
+            currentPlatform = nil
+            currentRightAnchor = anchor
+            position = CGPoint(x: anchor.edgeX, y: clampedY)
+            zoneStayTimer = 0
+            state = .peekingRight(remaining: 30.0)
+        }
+        peekEmergeSpring.value = -1.10
+        peekEmergeSpring.velocity = 1.5
+        peekEmergeSpring.target = 0.0
     }
 
     private func beginSmoothGlide(to target: CGPoint, targetZone: PerchZone, layout: ActiveWindowPerchLayout) {
@@ -518,7 +686,8 @@ public final class CompanionController {
             return
         }
         facingDirection = (target.x >= position.x) ? 1.0 : -1.0
-        let duration = min(max(TimeInterval(dist / 950.0), 0.18), 0.36)
+        squashSpring.impulse(2.5) // Playful takeoff stretch!
+        let duration = min(max(TimeInterval(dist / 880.0), 0.20), 0.40)
         state = .gliding(elapsed: 0, duration: duration, from: position, to: target, targetZone: targetZone)
     }
 
@@ -526,6 +695,7 @@ public final class CompanionController {
         zoneStayTimer = 0
         switch targetZone {
         case .windowTop:
+            squashSpring.impulse(-3.0) // Tactile landing cushion & bounce!
             if let top = layout.topPerch {
                 landOnWindowTop(top, atX: target.x)
             } else {
@@ -535,18 +705,14 @@ public final class CompanionController {
             }
         case .windowRightPeek:
             if let right = layout.windowRightPeek {
-                snapToWindowRightPeek(right, windowMaxY: layout.activeWindowFrame?.maxY ?? right.maxY, customY: target.y)
+                emergeIntoRightPeek(anchor: right, targetY: target.y, zone: .windowRightPeek, layout: layout)
             } else {
                 perchZone = .windowRightPeek
                 position = target
                 state = .peekingRight(remaining: 20.0)
             }
         case .screenRightPeek:
-            perchZone = .screenRightPeek
-            currentPlatform = nil
-            currentRightAnchor = layout.screenRightPeek
-            position = CGPoint(x: layout.screenRightPeek.edgeX, y: layout.screenRightPeek.clampedY(target.y))
-            state = .peekingRight(remaining: 25.0)
+            emergeIntoRightPeek(anchor: layout.screenRightPeek, targetY: target.y, zone: .screenRightPeek, layout: layout)
         }
     }
 
@@ -612,9 +778,10 @@ public final class CompanionController {
                        let right = layout.windowRightPeek,
                        Double.random(in: 0...1) < 0.28
                     {
-                        beginSmoothGlide(
-                            to: CGPoint(x: right.edgeX, y: right.defaultY),
-                            targetZone: .windowRightPeek,
+                        emergeIntoRightPeek(
+                            anchor: right,
+                            targetY: right.defaultY,
+                            zone: .windowRightPeek,
                             layout: layout
                         )
                     } else {
@@ -671,10 +838,12 @@ public final class CompanionController {
             if abs(dx) < 12 {
                 treatNode?.removeFromParent()
                 treatNode = nil
+                squashSpring.impulse(-2.2)
                 state = .loafing(remaining: 8.0)
             } else if let top = currentPlatform {
                 let dir: CGFloat = dx > 0 ? 1.0 : -1.0
                 facingDirection = dir
+                currentWalkSpeed = 115.0
                 position.x = top.clampedX(position.x + dir * 115.0 * CGFloat(dt), margin: 18)
                 offsetFromWindowMinX = position.x - top.windowMinX
             } else {
@@ -688,14 +857,18 @@ public final class CompanionController {
                 state = .peekingRight(remaining: 20.0)
                 return
             }
-            // Pause calmly in place while cursor hovers over Westie so clicking/right-clicking is effortless
-            if isHoveringDog {
+            // Smoothly decelerate to 0 when cursor hovers or presses Westie (zero 1-frame dead stop!)
+            let desiredSpeed: CGFloat = (isHoveringDog || isPointerDownOnDog) ? 0.0 : 38.0
+            let blend = min(1.0, CGFloat(dt) * 14.0)
+            currentWalkSpeed += (desiredSpeed - currentWalkSpeed) * blend
+
+            if currentWalkSpeed < 1.0 && (isHoveringDog || isPointerDownOnDog) {
+                currentWalkSpeed = 0
                 return
             }
 
             facingDirection = dir
-            let walkSpeed: CGFloat = 38.0 // Gentle, unhurried stroll
-            var nextX = position.x + dir * walkSpeed * CGFloat(dt)
+            var nextX = position.x + dir * currentWalkSpeed * CGFloat(dt)
 
             if nextX <= top.minX + 18 || nextX >= top.maxX - 18 {
                 // If walking right up to the right corner in `.auto` mode, sometimes peek over the right edge!
@@ -705,9 +878,10 @@ public final class CompanionController {
                    let right = layout.windowRightPeek,
                    Double.random(in: 0...1) < 0.35
                 {
-                    beginSmoothGlide(
-                        to: CGPoint(x: right.edgeX, y: right.defaultY),
-                        targetZone: .windowRightPeek,
+                    emergeIntoRightPeek(
+                        anchor: right,
+                        targetY: right.defaultY,
+                        zone: .windowRightPeek,
                         layout: layout
                     )
                     return
@@ -751,9 +925,10 @@ public final class CompanionController {
                 finishGlideArrival(at: to, targetZone: targetZone, layout: layout)
             } else {
                 let u = CGFloat(t / max(duration, 0.01))
-                // Smooth cubic ease-out + subtle 18pt hop arc
                 let eased = 1.0 - pow(1.0 - u, 3)
-                let arcHop = sin(u * .pi) * 18.0
+                let dist = hypot(to.x - from.x, to.y - from.y)
+                let arcHeight = min(max(dist * 0.16, 18.0), 52.0)
+                let arcHop = sin(u * .pi) * arcHeight
                 position = CGPoint(
                     x: from.x + (to.x - from.x) * eased,
                     y: from.y + (to.y - from.y) * eased + arcHop
@@ -770,56 +945,75 @@ public final class CompanionController {
 
     private func syncVisuals(dt: TimeInterval) {
         let bank = SpriteBank.shared
+        let s = min(max(squashSpring.value, -0.30), 0.30)
+        let dirSign: CGFloat = facingDirection >= 0 ? 1.0 : -1.0
 
-        // 1. Handle Dragged & Gliding poses cleanly (unmasked)
+        // 1. Dragged Pose: velocity pendulum swing + squash/stretch
         if case .dragged = state {
             cropNode.maskNode = nil
             dogSprite.size = topDogSize
             dogSprite.anchorPoint = CGPoint(x: 0.5, y: 0.04)
             dogSprite.texture = bank.texture(for: .westieDangling)
             dogSprite.position = position
-            dogSprite.xScale = facingDirection >= 0 ? 1.0 : -1.0
-            dogSprite.yScale = 1.0
-            dogSprite.zRotation = sin(breathPhase * 2.0) * 0.06
+            dogSprite.xScale = dirSign * (1.0 - s * 0.28)
+            dogSprite.yScale = 1.0 + s * 0.32
+            dogSprite.zRotation = swingRotationSpring.value + sin(breathPhase * 2.2) * 0.035
             shadowNode.isHidden = true
             inviteBadgeNode.isHidden = true
             return
         }
 
-        if case .gliding = state {
+        // 2. Parabolic Hop / Gliding Pose: mid-air scamper paws + dynamic pitch tilt + projected shadow
+        if case .gliding(let elapsed, let duration, _, let to, _) = state {
             cropNode.maskNode = nil
             dogSprite.size = topDogSize
             dogSprite.anchorPoint = CGPoint(x: 0.5, y: 0.04)
-            dogSprite.texture = bank.texture(for: .westieWalk1)
+            walkAnimTimer += dt
+            if walkAnimTimer >= 0.085 {
+                walkAnimTimer = 0
+                walkFrameToggle.toggle()
+            }
+            dogSprite.texture = bank.texture(for: walkFrameToggle ? .westieWalk1 : .westieWalk2)
             dogSprite.position = position
-            dogSprite.xScale = facingDirection >= 0 ? 1.0 : -1.0
-            dogSprite.yScale = 1.0
-            dogSprite.zRotation = 0
-            shadowNode.isHidden = true
+            dogSprite.xScale = dirSign * (1.0 - s * 0.30)
+            dogSprite.yScale = 1.0 + s * 0.34
+            let u = CGFloat(elapsed / max(duration, 0.01))
+            let pitchTilt = cos(u * .pi) * 0.16 * dirSign
+            dogSprite.zRotation = pitchTilt
+
+            shadowNode.position = CGPoint(x: position.x, y: to.y + 1)
+            let heightAboveTarget = max(0, position.y - to.y)
+            let shadowScale = max(0.45, 1.0 - heightAboveTarget / 140.0)
+            shadowNode.setScale(shadowScale)
+            shadowNode.isHidden = false
             inviteBadgeNode.isHidden = true
             return
         }
 
-        // 2. Right-Edge Peeking Modes (Fullscreen Screen-Right OR Non-Fullscreen Window-Right)
+        // 3. Right-Edge Peeking Modes (Fullscreen Screen-Right OR Non-Fullscreen Window-Right)
         if perchZone == .screenRightPeek || perchZone == .windowRightPeek {
-            let easeOut = 1.0 - pow(1.0 - peekHoverProgress, 3)
-            let isHoveredPose = peekHoverProgress >= 0.38
+            let hoverSlide = min(max(peekHoverSpring.value, -0.25), 1.25)
+            // Negative `peekEmergeSpring.value` tucks Westie behind the edge and springs smoothly out to 0!
+            let emergeTuck = max(0, -peekEmergeSpring.value) * 34.0 - min(max(peekEmergeSpring.value, 0), 0.22) * 7.0
 
             dogSprite.size = peekDogSize
             dogSprite.anchorPoint = CGPoint(x: 1.0, y: 0.5)
-            dogSprite.texture = bank.texture(for: isHoveredPose ? .westiePeekHover : .westiePeekCalm)
-            dogSprite.yScale = 1.0
+            dogSprite.texture = bank.texture(for: isPeekHoverTextureActive ? .westiePeekHover : .westiePeekCalm)
+
+            let stretchMag = 1.0 + s * 0.22
+            let squashPerp = 1.0 - s * 0.18
+            dogSprite.yScale = squashPerp
 
             // Subtle friendly ear/paw tilt ONLY while hovered — completely still otherwise!
-            let subtleHoverTilt: CGFloat = (peekHoverProgress > 0.05)
-                ? sin(hoverWavePhase * 5.2) * 0.038 * easeOut
+            let subtleHoverTilt: CGFloat = (peekHoverSpring.value > 0.04)
+                ? sin(hoverWavePhase * 5.2) * 0.036 * min(max(hoverSlide, 0), 1.0)
                 : 0.0
 
             if perchZone == .screenRightPeek {
-                // Monitor right bezel clips x > screenWidth naturally; peek LEFTWARD (`xScale = +1`)
+                // Monitor right bezel clips x > screenWidth naturally; peek LEFTWARD (`xScale > 0`)
                 cropNode.maskNode = nil
-                let tuckInward: CGFloat = 11.0 * (1.0 - easeOut) // +11pt tucked when calm -> 0pt full peek on hover!
-                dogSprite.xScale = 1.0
+                let tuckInward: CGFloat = max(-3.0, 11.0 * (1.0 - hoverSlide) + emergeTuck)
+                dogSprite.xScale = stretchMag
                 dogSprite.position = CGPoint(x: position.x + tuckInward, y: position.y)
                 dogSprite.zRotation = subtleHoverTilt
                 inviteBadgeNode.position = CGPoint(x: position.x - 68, y: position.y + 46)
@@ -827,10 +1021,10 @@ public final class CompanionController {
                 // Window right border: mask `x >= position.x` so ZERO pixels overlap inside the active window!
                 cropMaskNode.position = CGPoint(x: position.x, y: position.y)
                 cropNode.maskNode = cropMaskNode
-                let tuckBehindWindow: CGFloat = 10.0 * (1.0 - easeOut) // -10pt behind border when calm -> 0pt on hover!
-                dogSprite.xScale = -1.0 // Mirrored to peek RIGHTWARD out from behind the active window!
+                let tuckBehindWindow: CGFloat = max(-3.0, 10.0 * (1.0 - hoverSlide) + emergeTuck)
+                dogSprite.xScale = -stretchMag // Mirrored to peek RIGHTWARD out from behind the active window!
                 dogSprite.position = CGPoint(x: position.x - tuckBehindWindow, y: position.y)
-                dogSprite.zRotation = -subtleHoverTilt
+                dogSprite.zRotation = -subtleHoverTilt + swingRotationSpring.value * 0.4
                 inviteBadgeNode.position = CGPoint(x: position.x + 64, y: position.y + 46)
             }
 
@@ -843,16 +1037,16 @@ public final class CompanionController {
             return
         }
 
-        // 3. Active Window Top-Edge Mode (`正上方` — calm, zero shaking, zero heart popups)
+        // 4. Active Window Top-Edge Mode (`正上方` — springy tap bounce, smooth stride, zero intrusive popups)
         cropNode.maskNode = nil
         dogSprite.size = topDogSize
         dogSprite.anchorPoint = CGPoint(x: 0.5, y: 0.04)
-        dogSprite.yScale = 1.0
 
-        var bobY: CGFloat = 0
-        if isHoveringDog, state.isGrounded, case .walking = state {
-            // Calmly pause & rest chin when user hovers cursor over Westie on the top bar
-            dogSprite.texture = bank.texture(for: .westieChinLedge)
+        var bobY: CGFloat = max(0, tapHopSpring.value)
+        var strideTilt: CGFloat = 0
+
+        if case .walking = state, currentWalkSpeed < 5.0 {
+            dogSprite.texture = bank.texture(for: isHoveringDog ? .westieChinLedge : .westieIdle)
         } else {
             switch state {
             case .idle:
@@ -868,24 +1062,38 @@ public final class CompanionController {
             case .holdingTennisBall:
                 dogSprite.texture = bank.texture(for: .westieHoldingBall)
             case .walking, .chasingTreat:
-                walkAnimTimer += dt
-                let interval: TimeInterval = ( { if case .chasingTreat = state { return 0.12 } else { return 0.22 } }() )
-                if walkAnimTimer >= interval {
+                let speedRatio: Double = {
+                    if case .chasingTreat = state { return 1.8 }
+                    return max(0.25, Double(currentWalkSpeed / 38.0))
+                }()
+                walkAnimTimer += dt * speedRatio
+                if walkAnimTimer >= 0.19 {
                     walkAnimTimer = 0
                     walkFrameToggle.toggle()
                 }
                 dogSprite.texture = bank.texture(for: walkFrameToggle ? .westieWalk1 : .westieWalk2)
-                bobY = abs(sin(breathPhase * 2.0)) * 1.1
+                let speedFactor = min(1.0, currentWalkSpeed / 38.0)
+                bobY += abs(sin(breathPhase * 2.2)) * 1.4 * speedFactor
+                strideTilt = sin(breathPhase * 2.2) * 0.024 * speedFactor
             case .peekingRight, .gliding, .dragged:
                 dogSprite.texture = bank.texture(for: .westieIdle)
             }
         }
 
+        if state != .walking(direction: facingDirection, remaining: 0) {
+            if case .walking = state {} else if case .chasingTreat = state {} else {
+                currentWalkSpeed = 0
+            }
+        }
+
         dogSprite.position = CGPoint(x: position.x, y: position.y + bobY)
-        dogSprite.xScale = facingDirection >= 0 ? 1.0 : -1.0
-        dogSprite.zRotation = 0 // Zero head-shaking wobble on top bar!
+        dogSprite.xScale = dirSign * (1.0 - s * 0.30)
+        dogSprite.yScale = 1.0 + s * 0.34
+        dogSprite.zRotation = swingRotationSpring.value + strideTilt
 
         shadowNode.position = CGPoint(x: position.x, y: (currentPlatform?.y ?? position.y) + 1)
+        let hopScale = max(0.70, 1.0 - max(0, tapHopSpring.value) / 55.0)
+        shadowNode.setScale(hopScale)
         shadowNode.isHidden = false
 
         if case .holdingTennisBall = state {

@@ -13,6 +13,58 @@ public enum PerchPreference: String, CaseIterable, Sendable {
     case rightPeek = "优先右侧探头"
 }
 
+/// Second-order damped harmonic oscillator used for silky Squash & Stretch, peek overshoot, and pendulum swing.
+public struct DampedSpring: Sendable, Equatable {
+    public var value: CGFloat
+    public var velocity: CGFloat
+    public var target: CGFloat
+    public var stiffness: CGFloat
+    public var damping: CGFloat
+
+    public init(
+        value: CGFloat = 0,
+        velocity: CGFloat = 0,
+        target: CGFloat = 0,
+        stiffness: CGFloat = 260,
+        damping: CGFloat = 18
+    ) {
+        self.value = value
+        self.velocity = velocity
+        self.target = target
+        self.stiffness = stiffness
+        self.damping = damping
+    }
+
+    public mutating func step(dt: TimeInterval) {
+        let clampedDt = min(max(CGFloat(dt), 0.0005), 0.05)
+        let substeps = clampedDt > 0.014 ? 2 : 1
+        let h = clampedDt / CGFloat(substeps)
+        for _ in 0..<substeps {
+            let accel = (target - value) * stiffness - velocity * damping
+            velocity += accel * h
+            value += velocity * h
+        }
+        if isSettled {
+            value = target
+            velocity = 0
+        }
+    }
+
+    public mutating func impulse(_ dv: CGFloat) {
+        velocity += dv
+    }
+
+    public mutating func snap(to newValue: CGFloat) {
+        value = newValue
+        target = newValue
+        velocity = 0
+    }
+
+    public var isSettled: Bool {
+        abs(target - value) < 0.0015 && abs(velocity) < 0.008
+    }
+}
+
 public enum CompanionBehaviorState: Equatable, Sendable {
     case idle(remaining: TimeInterval)
     case walking(direction: CGFloat, remaining: TimeInterval)

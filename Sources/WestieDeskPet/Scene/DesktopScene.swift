@@ -22,10 +22,8 @@ public final class DesktopScene: SKScene {
 
     private let windowTracker = WindowPlatformTracker()
     private var latestSnapshot: ActiveWorkspaceSnapshot?
-    private var snapshotTimer: TimeInterval = 0
+    private var fullSnapshotTimer: TimeInterval = 0
     private var lastUpdateTime: TimeInterval = 0
-    private var isDraggingDog = false
-    private var lastAppliedFPS: Int = 30
 
     public override init(size: CGSize) {
         super.init(size: size)
@@ -67,7 +65,6 @@ public final class DesktopScene: SKScene {
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
             companion.update(dt: 1.0 / 60.0, snapshot: snap, sceneSize: size)
-            applyPreferredFPS(60)
         }
     }
 
@@ -76,11 +73,9 @@ public final class DesktopScene: SKScene {
         mode = target
         switch target {
         case .tennis:
-            isDraggingDog = false
             companion.setHovering(false)
             companion.rootNode.isHidden = true
             tennis.startMatch(in: size)
-            applyPreferredFPS(60)
         case .companion:
             tennis.stopMatch()
             companion.rootNode.isHidden = false
@@ -88,7 +83,6 @@ public final class DesktopScene: SKScene {
             if let snap = latestSnapshot {
                 companion.summonToFrontWindow(snapshot: snap, sceneSize: size)
             }
-            applyPreferredFPS(30)
         }
     }
 
@@ -109,7 +103,6 @@ public final class DesktopScene: SKScene {
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
             companion.moveImmediatelyToZone(zone, snapshot: snap, sceneSize: size)
-            applyPreferredFPS(60)
         }
     }
 
@@ -118,7 +111,6 @@ public final class DesktopScene: SKScene {
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
             companion.dropBoneTreat(snapshot: snap, sceneSize: size)
-            applyPreferredFPS(60)
         }
     }
 
@@ -127,22 +119,42 @@ public final class DesktopScene: SKScene {
         companion.triggerTennisInvite()
     }
 
+    public var isActivelyInteractingWithDog: Bool {
+        if companion.isPointerDownOnDog { return true }
+        if case .dragged = companion.state { return true }
+        return false
+    }
+
     /// Updates continuous hover & returns whether `OverlayWindow` should capture mouse events at `scenePoint`.
     public func updatePointerCaptureAndHover(atScenePoint scenePoint: CGPoint) -> Bool {
-        if mode == .tennis || isDraggingDog {
+        if mode == .tennis || isActivelyInteractingWithDog {
             return true
         }
-        // Extra 6pt outer cushion ensures fast right-clicks never miss!
+        // Extra 6pt outer cushion ensures fast clicks/right-clicks never miss!
         let captureRect = companion.interactiveHitRect().insetBy(dx: -6, dy: -6)
         let inside = captureRect.contains(scenePoint)
         companion.setHovering(inside)
-        if inside {
-            applyPreferredFPS(60)
-        }
         return inside
     }
 
-    // MARK: - SpriteKit Update Loop
+    /// Native macOS cursor matching current hover/grab state.
+    public func desiredCursor(atScenePoint scenePoint: CGPoint) -> NSCursor {
+        if mode == .tennis {
+            return .arrow
+        }
+        if isActivelyInteractingWithDog {
+            return .closedHand
+        }
+        if companion.isPointOnInviteBadge(scenePoint) {
+            return .pointingHand
+        }
+        if companion.isHoveringDog {
+            return .openHand
+        }
+        return .arrow
+    }
+
+    // MARK: - SpriteKit Update Loop (60Hz / 120Hz ProMotion Locked)
 
     public override func update(_ currentTime: TimeInterval) {
         let dt: TimeInterval
@@ -155,20 +167,21 @@ public final class DesktopScene: SKScene {
 
         switch mode {
         case .companion:
-            snapshotTimer -= dt
-            if snapshotTimer <= 0 {
-                // Poll window positions at ~8 Hz: responsive to drags while practically 0% CPU!
-                snapshotTimer = 0.125
+            fullSnapshotTimer -= dt
+            if fullSnapshotTimer <= 0 || latestSnapshot == nil {
+                // Full frontmost window discovery (~6 Hz)
+                fullSnapshotTimer = 0.16
                 refreshWindowSnapshot()
+            } else {
+                // O(1) single-window query every frame (60/120Hz) for zero-lag window drag follow!
+                fastRefreshCurrentActiveWindow()
             }
             if let snap = latestSnapshot {
                 companion.update(dt: dt, snapshot: snap, sceneSize: size)
             }
-            applyPreferredFPS(companion.isNeedingHighFPS ? 60 : 18)
 
         case .tennis:
             tennis.update(dt: dt)
-            applyPreferredFPS(60)
         }
     }
 
@@ -177,11 +190,11 @@ public final class DesktopScene: SKScene {
         latestSnapshot = windowTracker.captureSnapshot(for: screen)
     }
 
-    private func applyPreferredFPS(_ fps: Int) {
-        guard fps != lastAppliedFPS else { return }
-        lastAppliedFPS = fps
-        view?.preferredFramesPerSecond = fps
-        onPreferredFPSChanged?(fps)
+    private func fastRefreshCurrentActiveWindow() {
+        guard let prev = latestSnapshot,
+              let screen = view?.window?.screen ?? NSScreen.main
+        else { return }
+        latestSnapshot = windowTracker.fastRefreshActiveWindow(in: prev, for: screen)
     }
 
     // MARK: - Mouse & Keyboard Events
@@ -200,12 +213,7 @@ public final class DesktopScene: SKScene {
         if mode == .tennis {
             tennis.handleLeftMouseDown(scenePoint: pt)
         } else {
-            if companion.handleMouseDown(at: pt) {
-                if case .dragged = companion.state {
-                    isDraggingDog = true
-                    applyPreferredFPS(60)
-                }
-            }
+            _ = companion.handleMouseDown(at: pt)
         }
     }
 
@@ -213,7 +221,7 @@ public final class DesktopScene: SKScene {
         let pt = event.location(in: self)
         if mode == .tennis {
             tennis.handleMouseMoved(scenePoint: pt)
-        } else if isDraggingDog {
+        } else if isActivelyInteractingWithDog {
             companion.handleMouseDragged(to: pt)
         }
     }
@@ -222,8 +230,7 @@ public final class DesktopScene: SKScene {
         let pt = event.location(in: self)
         if mode == .tennis {
             tennis.handleLeftMouseUp(scenePoint: pt)
-        } else if isDraggingDog {
-            isDraggingDog = false
+        } else if isActivelyInteractingWithDog {
             refreshWindowSnapshot()
             companion.handleMouseUp(at: pt, snapshot: latestSnapshot, sceneSize: size)
         }

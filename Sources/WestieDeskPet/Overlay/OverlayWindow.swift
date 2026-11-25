@@ -3,10 +3,27 @@ import SpriteKit
 
 @MainActor
 public final class InteractiveSKView: SKView {
+    public var desiredCursor: NSCursor = .arrow {
+        didSet {
+            guard desiredCursor !== oldValue else { return }
+            window?.invalidateCursorRects(for: self)
+            desiredCursor.set()
+        }
+    }
+
     public override var acceptsFirstResponder: Bool { true }
 
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    public override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: desiredCursor)
+    }
+
+    public override func cursorUpdate(with event: NSEvent) {
+        desiredCursor.set()
     }
 
     public override func mouseMoved(with event: NSEvent) {
@@ -22,6 +39,18 @@ public final class InteractiveSKView: SKView {
             return
         }
         super.mouseDown(with: event)
+        if let desktopScene = scene as? DesktopScene {
+            let pt = event.location(in: desktopScene)
+            desiredCursor = desktopScene.desiredCursor(atScenePoint: pt)
+        }
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        if let desktopScene = scene as? DesktopScene {
+            let pt = event.location(in: desktopScene)
+            desiredCursor = desktopScene.desiredCursor(atScenePoint: pt)
+        }
     }
 
     public override func rightMouseDown(with event: NSEvent) {
@@ -87,7 +116,8 @@ public final class OverlayWindowController {
 
         skView = InteractiveSKView(frame: NSRect(origin: .zero, size: frame.size))
         skView.allowsTransparency = true
-        skView.preferredFramesPerSecond = 24
+        // Lock to native display refresh rate (120Hz ProMotion / 60Hz external) without runtime FPS-switch hitches!
+        skView.preferredFramesPerSecond = max(60, screen.maximumFramesPerSecond)
         skView.ignoresSiblingOrder = true
         skView.autoresizingMask = [.width, .height]
 
@@ -104,7 +134,7 @@ public final class OverlayWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.realignToCurrentScreen()
             }
         }
@@ -115,7 +145,7 @@ public final class OverlayWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.handleActiveWorkspaceChanged()
             }
         }
@@ -125,7 +155,7 @@ public final class OverlayWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.realignToCurrentScreen()
                 self?.handleActiveWorkspaceChanged()
             }
@@ -152,6 +182,10 @@ public final class OverlayWindowController {
         let activeScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) })
             ?? NSScreen.main
         guard let screen = activeScreen else { return }
+        let targetFPS = max(60, screen.maximumFramesPerSecond)
+        if skView.preferredFramesPerSecond != targetFPS {
+            skView.preferredFramesPerSecond = targetFPS
+        }
         if panel.frame != screen.frame {
             panel.setFrame(screen.frame, display: true)
             scene.size = screen.frame.size
@@ -175,6 +209,7 @@ public final class OverlayWindowController {
         case .tennis:
             panel.allowKeyFocus = true
             panel.ignoresMouseEvents = false
+            skView.desiredCursor = .arrow
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(skView)
@@ -183,12 +218,14 @@ public final class OverlayWindowController {
 
     private func startDynamicHitTesting() {
         mousePollTimer?.invalidate()
-        // 60 Hz lightweight rect check eliminates any pass-through race before quick right-clicks!
-        mousePollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // Scheduled in `.common` RunLoop mode so pointer & cursor tracking stay silky even while dragging windows!
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
                 self?.syncPointerState()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        mousePollTimer = timer
 
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
@@ -199,9 +236,11 @@ public final class OverlayWindowController {
         }
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .leftMouseUp]
         ) { [weak self] event in
-            self?.syncPointerState()
+            MainActor.assumeIsolated {
+                self?.syncPointerState()
+            }
             return event
         }
     }
@@ -224,6 +263,19 @@ public final class OverlayWindowController {
         let shouldCapture = scene.updatePointerCaptureAndHover(atScenePoint: scenePt)
         if panel.ignoresMouseEvents == shouldCapture {
             panel.ignoresMouseEvents = !shouldCapture
+            if !shouldCapture {
+                // Reset cursor once upon leaving Westie so underlying apps control their own cursors cleanly
+                skView.desiredCursor = .arrow
+                NSCursor.arrow.set()
+            }
+        }
+        if shouldCapture {
+            let nextCursor = scene.desiredCursor(atScenePoint: scenePt)
+            if skView.desiredCursor !== nextCursor {
+                skView.desiredCursor = nextCursor
+            } else {
+                nextCursor.set()
+            }
         }
     }
 }
