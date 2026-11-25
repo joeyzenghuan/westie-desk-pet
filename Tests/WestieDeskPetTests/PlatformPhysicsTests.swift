@@ -103,7 +103,7 @@ struct PlatformPhysicsTests {
             isDockFloor: false,
             isFrontmost: true
         )
-        let next = WestieBehaviorPlanner.chooseNextBehavior(
+        let next = WestieBehaviorPlanner.chooseNextTopBehavior(
             currentX: 300,
             platform: plat,
             context: CompanionContext(isMeetingActive: true)

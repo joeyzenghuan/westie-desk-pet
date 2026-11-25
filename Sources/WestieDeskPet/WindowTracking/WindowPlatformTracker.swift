@@ -4,6 +4,7 @@ import Foundation
 
 public struct ActiveWorkspaceSnapshot: Sendable {
     public let platforms: [WindowPlatform]
+    public let perchLayout: ActiveWindowPerchLayout
     public let frontmostAppName: String
     public let frontmostBundleID: String
     public let isMeetingActive: Bool
@@ -105,8 +106,16 @@ public final class WindowPlatformTracker {
             excludedPID: ownPID
         )
 
+        let perchLayout = PlatformPhysics.computeActiveWindowPerchLayout(
+            windowsFrontToBack: parsedWindows,
+            screenSize: screenFrame.size,
+            visibleScreenFrame: localVisibleFrame,
+            excludedPID: ownPID
+        )
+
         return ActiveWorkspaceSnapshot(
             platforms: platforms,
+            perchLayout: perchLayout,
             frontmostAppName: frontName,
             frontmostBundleID: frontBundle,
             isMeetingActive: isMeeting,

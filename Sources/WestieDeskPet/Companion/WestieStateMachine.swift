@@ -1,21 +1,34 @@
 import CoreGraphics
 import Foundation
 
+public enum PerchZone: String, Equatable, Sendable {
+    case windowTop = "windowTop"
+    case windowRightPeek = "windowRightPeek"
+    case screenRightPeek = "screenRightPeek"
+}
+
+public enum PerchPreference: String, CaseIterable, Sendable {
+    case auto = "自动切换 (正上方 + 右侧)"
+    case windowTop = "优先窗口正上方"
+    case rightPeek = "优先右侧探头"
+}
+
 public enum CompanionBehaviorState: Equatable, Sendable {
     case idle(remaining: TimeInterval)
     case walking(direction: CGFloat, remaining: TimeInterval)
-    case sitHeadTilt(remaining: TimeInterval)
+    case sitCalm(remaining: TimeInterval)
+    case loafing(remaining: TimeInterval)
+    case chinRest(remaining: TimeInterval)
     case sleeping(remaining: TimeInterval)
-    case jumping(elapsed: TimeInterval, duration: TimeInterval, start: CGPoint, velocity: CGVector)
-    case falling(velocity: CGVector)
-    case petted(remaining: TimeInterval)
+    case peekingRight(remaining: TimeInterval)
+    case gliding(elapsed: TimeInterval, duration: TimeInterval, from: CGPoint, to: CGPoint, targetZone: PerchZone)
     case dragged
     case holdingTennisBall(remaining: TimeInterval)
     case chasingTreat(treatX: CGFloat)
 
     public var isGrounded: Bool {
         switch self {
-        case .jumping, .falling, .dragged:
+        case .gliding, .dragged:
             return false
         default:
             return true
@@ -24,9 +37,9 @@ public enum CompanionBehaviorState: Equatable, Sendable {
 
     public var isHighFrameRateNeeded: Bool {
         switch self {
-        case .walking, .jumping, .falling, .dragged, .petted, .chasingTreat:
+        case .walking, .gliding, .dragged, .chasingTreat:
             return true
-        case .idle, .sitHeadTilt, .sleeping, .holdingTennisBall:
+        case .idle, .sitCalm, .loafing, .chinRest, .sleeping, .peekingRight, .holdingTennisBall:
             return false
         }
     }
@@ -52,53 +65,56 @@ public struct CompanionContext: Sendable {
 }
 
 public enum WestieBehaviorPlanner {
-    /// Chooses the next autonomous grounded behavior when a timer finishes.
-    public static func chooseNextBehavior(
+    /// Chooses the next calm, non-intrusive grounded behavior on the active window's top edge.
+    public static func chooseNextTopBehavior(
         currentX: CGFloat,
         platform: WindowPlatform,
         context: CompanionContext,
         randomUnit: Double = Double.random(in: 0...1)
     ) -> CompanionBehaviorState {
         if context.forceQuietSleep || context.isMeetingActive {
-            return .sleeping(remaining: 18.0)
+            return .sleeping(remaining: 24.0)
         }
 
         if context.shouldOfferTennisBreak {
             return .holdingTennisBall(remaining: 22.0)
         }
 
-        // During coding, Westie is calmer: sits/tilts head or naps more often, walks gently
+        // Calm office-friendly distribution: mostly loafing, chin-resting, sitting quietly, or slow strolling
         if context.isCodingActive {
-            if randomUnit < 0.34 {
-                return .sitHeadTilt(remaining: 6.5)
-            } else if randomUnit < 0.58 {
-                return .idle(remaining: 5.5)
-            } else if randomUnit < 0.78 {
-                return .sleeping(remaining: 12.0)
+            if randomUnit < 0.28 {
+                return .loafing(remaining: Double.random(in: 9.0...16.0))
+            } else if randomUnit < 0.52 {
+                return .chinRest(remaining: Double.random(in: 7.0...13.0))
+            } else if randomUnit < 0.74 {
+                return .sitCalm(remaining: Double.random(in: 6.0...11.0))
+            } else if randomUnit < 0.88 {
+                return .sleeping(remaining: Double.random(in: 12.0...20.0))
             } else {
                 let dir = preferredWalkDirection(currentX: currentX, platform: platform)
-                return .walking(direction: dir, remaining: Double.random(in: 2.2...4.2))
+                return .walking(direction: dir, remaining: Double.random(in: 2.0...3.8))
             }
         }
 
-        // Normal lively desktop companion distribution
-        if randomUnit < 0.38 {
+        if randomUnit < 0.26 {
             let dir = preferredWalkDirection(currentX: currentX, platform: platform)
-            return .walking(direction: dir, remaining: Double.random(in: 2.5...5.0))
-        } else if randomUnit < 0.64 {
-            return .idle(remaining: Double.random(in: 3.0...5.5))
-        } else if randomUnit < 0.85 {
-            return .sitHeadTilt(remaining: Double.random(in: 4.0...6.5))
+            return .walking(direction: dir, remaining: Double.random(in: 2.4...4.4))
+        } else if randomUnit < 0.48 {
+            return .loafing(remaining: Double.random(in: 8.0...14.0))
+        } else if randomUnit < 0.68 {
+            return .chinRest(remaining: Double.random(in: 6.5...11.0))
+        } else if randomUnit < 0.86 {
+            return .idle(remaining: Double.random(in: 4.5...8.0))
         } else {
-            return .sleeping(remaining: Double.random(in: 9.0...15.0))
+            return .sleeping(remaining: Double.random(in: 10.0...18.0))
         }
     }
 
     public static func preferredWalkDirection(currentX: CGFloat, platform: WindowPlatform) -> CGFloat {
         let leftRoom = currentX - platform.minX
         let rightRoom = platform.maxX - currentX
-        if leftRoom < 48 { return 1.0 }
-        if rightRoom < 48 { return -1.0 }
+        if leftRoom < 42 { return 1.0 }
+        if rightRoom < 42 { return -1.0 }
         return Bool.random() ? 1.0 : -1.0
     }
 }

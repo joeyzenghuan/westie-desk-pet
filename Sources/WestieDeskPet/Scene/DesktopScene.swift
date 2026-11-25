@@ -52,13 +52,23 @@ public final class DesktopScene: SKScene {
         super.didMove(to: view)
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
-            companion.placeInitially(on: snap.platforms, sceneSize: size)
+            companion.placeInitially(snapshot: snap, sceneSize: size)
         }
     }
 
     public override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         tennis.layout(in: size)
+        refreshWindowSnapshot()
+    }
+
+    public func handleWorkspaceNotification() {
+        guard mode == .companion else { return }
+        refreshWindowSnapshot()
+        if let snap = latestSnapshot {
+            companion.update(dt: 1.0 / 60.0, snapshot: snap, sceneSize: size)
+            applyPreferredFPS(60)
+        }
     }
 
     public func switchToMode(_ target: AppInteractionMode) {
@@ -67,6 +77,7 @@ public final class DesktopScene: SKScene {
         switch target {
         case .tennis:
             isDraggingDog = false
+            companion.setHovering(false)
             companion.rootNode.isHidden = true
             tennis.startMatch(in: size)
             applyPreferredFPS(60)
@@ -75,7 +86,7 @@ public final class DesktopScene: SKScene {
             companion.rootNode.isHidden = false
             refreshWindowSnapshot()
             if let snap = latestSnapshot {
-                companion.summonToFrontWindow(snapshot: snap)
+                companion.summonToFrontWindow(snapshot: snap, sceneSize: size)
             }
             applyPreferredFPS(30)
         }
@@ -87,7 +98,18 @@ public final class DesktopScene: SKScene {
         }
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
-            companion.summonToFrontWindow(snapshot: snap)
+            companion.summonToFrontWindow(snapshot: snap, sceneSize: size)
+        }
+    }
+
+    public func moveDogToZone(_ zone: PerchZone) {
+        if mode == .tennis {
+            switchToMode(.companion)
+        }
+        refreshWindowSnapshot()
+        if let snap = latestSnapshot {
+            companion.moveImmediatelyToZone(zone, snapshot: snap, sceneSize: size)
+            applyPreferredFPS(60)
         }
     }
 
@@ -95,7 +117,7 @@ public final class DesktopScene: SKScene {
         if mode == .tennis { return }
         refreshWindowSnapshot()
         if let snap = latestSnapshot {
-            companion.dropBoneTreat(snapshot: snap)
+            companion.dropBoneTreat(snapshot: snap, sceneSize: size)
             applyPreferredFPS(60)
         }
     }
@@ -105,28 +127,19 @@ public final class DesktopScene: SKScene {
         companion.triggerTennisInvite()
     }
 
-    /// Used by `OverlayWindow` to dynamically toggle `ignoresMouseEvents` in Companion Mode!
-    public func shouldCaptureMouse(at globalScreenPoint: CGPoint, windowFrame: CGRect) -> Bool {
+    /// Updates continuous hover & returns whether `OverlayWindow` should capture mouse events at `scenePoint`.
+    public func updatePointerCaptureAndHover(atScenePoint scenePoint: CGPoint) -> Bool {
         if mode == .tennis || isDraggingDog {
             return true
         }
-        let localPoint = CGPoint(
-            x: globalScreenPoint.x - windowFrame.minX,
-            y: globalScreenPoint.y - windowFrame.minY
-        )
-        return companion.interactiveHitRect().contains(localPoint)
-    }
-
-    public func notifyGlobalHover(at globalScreenPoint: CGPoint, windowFrame: CGRect) {
-        guard mode == .companion, !isDraggingDog else { return }
-        let localPoint = CGPoint(
-            x: globalScreenPoint.x - windowFrame.minX,
-            y: globalScreenPoint.y - windowFrame.minY
-        )
-        if companion.interactiveHitRect().contains(localPoint) {
-            companion.handleHoverStroke(at: localPoint)
+        // Extra 6pt outer cushion ensures fast right-clicks never miss!
+        let captureRect = companion.interactiveHitRect().insetBy(dx: -6, dy: -6)
+        let inside = captureRect.contains(scenePoint)
+        companion.setHovering(inside)
+        if inside {
             applyPreferredFPS(60)
         }
+        return inside
     }
 
     // MARK: - SpriteKit Update Loop
@@ -178,7 +191,7 @@ public final class DesktopScene: SKScene {
         if mode == .tennis {
             tennis.handleMouseMoved(scenePoint: pt)
         } else {
-            companion.handleHoverStroke(at: pt)
+            companion.setHovering(companion.interactiveHitRect().insetBy(dx: -6, dy: -6).contains(pt))
         }
     }
 
@@ -211,7 +224,8 @@ public final class DesktopScene: SKScene {
             tennis.handleLeftMouseUp(scenePoint: pt)
         } else if isDraggingDog {
             isDraggingDog = false
-            companion.handleMouseUp(at: pt)
+            refreshWindowSnapshot()
+            companion.handleMouseUp(at: pt, snapshot: latestSnapshot, sceneSize: size)
         }
     }
 
@@ -219,8 +233,10 @@ public final class DesktopScene: SKScene {
         let pt = event.location(in: self)
         if mode == .tennis {
             tennis.handleRightMouseDown(scenePoint: pt)
-        } else if companion.interactiveHitRect().contains(pt) {
-            presentDogQuickMenu(with: event)
+        } else if let view = self.view {
+            let menu = buildDogContextMenu()
+            let viewPt = view.convert(event.locationInWindow, from: nil)
+            menu.popUp(positioning: nil, at: viewPt, in: view)
         }
     }
 
@@ -236,28 +252,103 @@ public final class DesktopScene: SKScene {
         }
     }
 
-    private func presentDogQuickMenu(with event: NSEvent) {
-        guard let view = self.view else { return }
+    // MARK: - Rich Context Menu on Westie
+
+    public func buildDogContextMenu() -> NSMenu {
         let menu = NSMenu(title: "西高地")
 
         let tennisItem = NSMenuItem(title: "🎾 开始打网球 (WASD + 鼠标)", action: #selector(ctxStartTennis), keyEquivalent: "")
         tennisItem.target = self
         menu.addItem(tennisItem)
 
+        menu.addItem(.separator())
+
+        let moveTopItem = NSMenuItem(title: "📍 移到当前窗口正上方", action: #selector(ctxMoveWindowTop), keyEquivalent: "")
+        moveTopItem.target = self
+        menu.addItem(moveTopItem)
+
+        let moveRightItem = NSMenuItem(title: "👀 移到右侧探头", action: #selector(ctxMoveRightPeek), keyEquivalent: "")
+        moveRightItem.target = self
+        menu.addItem(moveRightItem)
+
+        let prefSubmenu = NSMenu(title: "位置偏好")
+        for pref in PerchPreference.allCases {
+            let item = NSMenuItem(title: pref.rawValue, action: #selector(ctxSelectPerchPreference(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = pref.rawValue
+            item.state = (companion.perchPreference == pref) ? .on : .off
+            prefSubmenu.addItem(item)
+        }
+        let prefParent = NSMenuItem(title: "🧭 陪伴位置偏好", action: nil, keyEquivalent: "")
+        prefParent.submenu = prefSubmenu
+        menu.addItem(prefParent)
+
+        menu.addItem(.separator())
+
+        let speedSubmenu = NSMenu(title: "网球球速")
+        for spd in TennisGameSpeed.allCases {
+            let suffix = (spd == .slow) ? " (默认)" : ""
+            let item = NSMenuItem(title: "\(spd.displayName)\(suffix)", action: #selector(ctxSelectSpeed(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = spd.rawValue
+            item.state = (tennis.gameSpeed == spd) ? .on : .off
+            speedSubmenu.addItem(item)
+        }
+        let speedParent = NSMenuItem(title: "⏱ 网球球速: \(tennis.gameSpeed.rawValue)", action: nil, keyEquivalent: "")
+        speedParent.submenu = speedSubmenu
+        menu.addItem(speedParent)
+
+        menu.addItem(.separator())
+
         let treatItem = NSMenuItem(title: "🦴 喂一根骨头饼干", action: #selector(ctxFeedTreat), keyEquivalent: "")
         treatItem.target = self
         menu.addItem(treatItem)
 
-        let sleepTitle = companion.forceQuietSleep ? "☀️ 叫醒小狗" : "💤 安静趴睡模式"
+        let sleepTitle = companion.forceQuietSleep ? "☀️ 取消固定趴睡" : "💤 安静趴睡模式"
         let sleepItem = NSMenuItem(title: sleepTitle, action: #selector(ctxToggleSleep), keyEquivalent: "")
         sleepItem.target = self
         menu.addItem(sleepItem)
 
-        NSMenu.popUpContextMenu(menu, with: event, for: view)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "退出 Westie Desk Pet", action: #selector(ctxQuitApp), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
     }
 
     @objc private func ctxStartTennis() {
         switchToMode(.tennis)
+    }
+
+    @objc private func ctxMoveWindowTop() {
+        companion.perchPreference = .auto
+        moveDogToZone(.windowTop)
+    }
+
+    @objc private func ctxMoveRightPeek() {
+        refreshWindowSnapshot()
+        if latestSnapshot?.perchLayout.isFullScreenMode == true {
+            moveDogToZone(.screenRightPeek)
+        } else {
+            moveDogToZone(.windowRightPeek)
+        }
+    }
+
+    @objc private func ctxSelectPerchPreference(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let pref = PerchPreference(rawValue: raw)
+        else { return }
+        companion.perchPreference = pref
+        summonDogToActiveWindow()
+    }
+
+    @objc private func ctxSelectSpeed(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let spd = TennisGameSpeed(rawValue: raw)
+        else { return }
+        tennis.gameSpeed = spd
     }
 
     @objc private func ctxFeedTreat() {
@@ -266,5 +357,9 @@ public final class DesktopScene: SKScene {
 
     @objc private func ctxToggleSleep() {
         companion.forceQuietSleep.toggle()
+    }
+
+    @objc private func ctxQuitApp() {
+        NSApp.terminate(nil)
     }
 }

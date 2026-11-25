@@ -6,9 +6,27 @@ public final class TennisMatchController {
     public let rootNode = SKNode()
 
     public var onRequestExitTennis: (() -> Void)?
+    public var onGameSpeedChanged: ((TennisGameSpeed) -> Void)?
+
     public var difficulty: TennisDifficulty = .casual {
         didSet {
+            updateDifficultyButtonLabel()
             updateScoreboardText()
+        }
+    }
+
+    public var gameSpeed: TennisGameSpeed = {
+        if let raw = UserDefaults.standard.string(forKey: "westie.tennis.speed"),
+           let saved = TennisGameSpeed(rawValue: raw)
+        {
+            return saved
+        }
+        return .slow // Default slower rally pace as requested!
+    }() {
+        didSet {
+            UserDefaults.standard.set(gameSpeed.rawValue, forKey: "westie.tennis.speed")
+            updateSpeedButtonLabel()
+            onGameSpeedChanged?(gameSpeed)
         }
     }
 
@@ -28,6 +46,7 @@ public final class TennisMatchController {
     private let hintLabel: SKLabelNode
     private let exitButtonNode: SKNode
     private let difficultyButtonNode: SKNode
+    private let speedButtonNode: SKNode
 
     // Match State
     private let targetPointsToWin = 5
@@ -67,6 +86,10 @@ public final class TennisMatchController {
     private static let keySpace: UInt16 = 49
     private static let keyR: UInt16 = 15
     private static let keyEsc: UInt16 = 53
+    private static let keyMinus: UInt16 = 27
+    private static let keyEqual: UInt16 = 24
+    private static let keyLeftBracket: UInt16 = 33
+    private static let keyRightBracket: UInt16 = 30
     // Arrow keys as bonus convenience
     private static let keyUp: UInt16 = 126
     private static let keyLeft: UInt16 = 123
@@ -131,16 +154,19 @@ public final class TennisMatchController {
         bannerLabel.zPosition = 15
 
         hintLabel = SKLabelNode(fontNamed: "Menlo")
-        hintLabel.fontSize = 11.5
+        hintLabel.fontSize = 11.2
         hintLabel.fontColor = NSColor(calibratedWhite: 0.94, alpha: 0.92)
-        hintLabel.text = "WASD 移动(双击冲刺) · 鼠标瞄准 · 左键平击/按住蓄力抽球 · 右键放小球/高吊球 · R 重开 · ESC 收起"
+        hintLabel.text = "WASD 移动(双击冲刺) · 鼠标瞄准 · 左键击球/长按上旋 · 右键小球/高吊 · [-/+] 调球速 · R 重开 · ESC 收起"
         hintLabel.zPosition = 12
 
-        exitButtonNode = Self.buildPillButton(title: "✕ 收起球场 (ESC)", width: 132, fill: NSColor(calibratedRed: 0.22, green: 0.24, blue: 0.28, alpha: 0.92))
+        exitButtonNode = Self.buildPillButton(title: "✕ 收起球场 (ESC)", width: 136, fill: NSColor(calibratedRed: 0.22, green: 0.24, blue: 0.28, alpha: 0.92))
         exitButtonNode.zPosition = 14
 
-        difficultyButtonNode = Self.buildPillButton(title: "🐾 难度: 休闲小狗", width: 144, fill: NSColor(calibratedRed: 0.14, green: 0.36, blue: 0.28, alpha: 0.92))
+        difficultyButtonNode = Self.buildPillButton(title: "🐾 难度: 休闲小狗", width: 142, fill: NSColor(calibratedRed: 0.14, green: 0.36, blue: 0.28, alpha: 0.92))
         difficultyButtonNode.zPosition = 14
+
+        speedButtonNode = Self.buildPillButton(title: "球速: \(gameSpeed.displayName)", width: 146, fill: NSColor(calibratedRed: 0.16, green: 0.29, blue: 0.48, alpha: 0.92))
+        speedButtonNode.zPosition = 14
 
         rootNode.addChild(courtOriginNode)
         Self.populateCourtGeometry(into: courtOriginNode)
@@ -158,12 +184,14 @@ public final class TennisMatchController {
         courtOriginNode.addChild(hintLabel)
         courtOriginNode.addChild(exitButtonNode)
         courtOriginNode.addChild(difficultyButtonNode)
+        courtOriginNode.addChild(speedButtonNode)
 
-        scoreLabel.position = CGPoint(x: 0, y: TennisCourtMetrics.apronMaxY + 22)
+        scoreLabel.position = CGPoint(x: 0, y: TennisCourtMetrics.apronMaxY + 14)
         bannerLabel.position = CGPoint(x: 0, y: 42)
         hintLabel.position = CGPoint(x: 0, y: -TennisCourtMetrics.apronMaxY - 24)
-        exitButtonNode.position = CGPoint(x: TennisCourtMetrics.apronMaxX - 66, y: TennisCourtMetrics.apronMaxY + 26)
-        difficultyButtonNode.position = CGPoint(x: -TennisCourtMetrics.apronMaxX + 72, y: TennisCourtMetrics.apronMaxY + 26)
+        difficultyButtonNode.position = CGPoint(x: -158, y: TennisCourtMetrics.apronMaxY + 48)
+        speedButtonNode.position = CGPoint(x: 0, y: TennisCourtMetrics.apronMaxY + 48)
+        exitButtonNode.position = CGPoint(x: 158, y: TennisCourtMetrics.apronMaxY + 48)
     }
 
     // MARK: - Lifecycle
@@ -236,6 +264,18 @@ public final class TennisMatchController {
             }
             return
         }
+        if code == Self.keyMinus || code == Self.keyLeftBracket {
+            let next = gameSpeed.slower()
+            gameSpeed = next
+            spawnCourtPopText("球速: \(next.displayName)", at: CGPoint(x: 0, y: 95), color: .cyan)
+            return
+        }
+        if code == Self.keyEqual || code == Self.keyRightBracket {
+            let next = gameSpeed.faster()
+            gameSpeed = next
+            spawnCourtPopText("球速: \(next.displayName)", at: CGPoint(x: 0, y: 95), color: .cyan)
+            return
+        }
 
         if code == Self.keySpace {
             if isMatchOver, let scene = rootNode.scene {
@@ -287,7 +327,11 @@ public final class TennisMatchController {
         }
         if difficultyButtonNode.calculateAccumulatedFrame().insetBy(dx: -6, dy: -6).contains(local) {
             difficulty = (difficulty == .casual) ? .pro : .casual
-            updateDifficultyButtonLabel()
+            return
+        }
+        if speedButtonNode.calculateAccumulatedFrame().insetBy(dx: -6, dy: -6).contains(local) {
+            gameSpeed = gameSpeed.next()
+            spawnCourtPopText("球速切换: \(gameSpeed.displayName)", at: CGPoint(x: 0, y: 95), color: .cyan)
             return
         }
 
@@ -375,8 +419,8 @@ public final class TennisMatchController {
             chargeRing.isHidden = true
         }
 
-        // 1. Move human player via WASD
-        stepPlayerMovement(dt: clampedDt)
+        // 1. Move human player via WASD (responsive even in slow-ball mode!)
+        stepPlayerMovement(dt: clampedDt * gameSpeed.playerMoveScale)
 
         // 2. Handle serve waiting / between-point pause
         if isMatchOver {
@@ -415,8 +459,10 @@ public final class TennisMatchController {
             currentChargeRatio = 0
         }
 
-        // 3. Step 2.5D Ball Physics
-        let stepResult = TennisPhysics.stepBall(ball: &ball, dt: clampedDt)
+        let simDt = clampedDt * gameSpeed.simulationScale
+
+        // 3. Step 2.5D Ball Physics (scaled cleanly by `gameSpeed`)
+        let stepResult = TennisPhysics.stepBall(ball: &ball, dt: simDt)
         if stepResult.bounced {
             spawnCourtBounceMark(at: CGPoint(x: ball.x, y: ball.y))
         }
@@ -437,7 +483,7 @@ public final class TennisMatchController {
             isBallLive: !isAwaitingServe,
             playerPosition: playerPos,
             difficulty: difficulty,
-            dt: clampedDt
+            dt: simDt
         )
         if westieHit {
             rallyHits += 1
@@ -659,6 +705,12 @@ public final class TennisMatchController {
     private func updateDifficultyButtonLabel() {
         if let lbl = difficultyButtonNode.childNode(withName: "pillLabel") as? SKLabelNode {
             lbl.text = "🐾 难度: \(difficulty.rawValue)"
+        }
+    }
+
+    private func updateSpeedButtonLabel() {
+        if let lbl = speedButtonNode.childNode(withName: "pillLabel") as? SKLabelNode {
+            lbl.text = "球速: \(gameSpeed.displayName)"
         }
     }
 

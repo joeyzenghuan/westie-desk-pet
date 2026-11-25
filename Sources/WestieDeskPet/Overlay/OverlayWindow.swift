@@ -13,8 +13,29 @@ public final class InteractiveSKView: SKView {
         scene?.mouseMoved(with: event)
     }
 
+    public override func mouseDown(with event: NSEvent) {
+        if let desktopScene = scene as? DesktopScene,
+           desktopScene.mode == .companion,
+           event.modifierFlags.contains(.control)
+        {
+            popCompanionContextMenu(with: event, desktopScene: desktopScene)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
     public override func rightMouseDown(with event: NSEvent) {
+        if let desktopScene = scene as? DesktopScene, desktopScene.mode == .companion {
+            popCompanionContextMenu(with: event, desktopScene: desktopScene)
+            return
+        }
         scene?.rightMouseDown(with: event)
+    }
+
+    private func popCompanionContextMenu(with event: NSEvent, desktopScene: DesktopScene) {
+        let menu = desktopScene.buildDogContextMenu()
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: viewPoint, in: self)
     }
 
     public override func keyDown(with event: NSEvent) {
@@ -43,7 +64,7 @@ public final class OverlayWindowController {
 
     private nonisolated(unsafe) var mousePollTimer: Timer?
     private nonisolated(unsafe) var globalMouseMonitor: Any?
-    private var lastMouseLoc: CGPoint = .zero
+    private nonisolated(unsafe) var localMouseMonitor: Any?
 
     public init(screen: NSScreen) {
         let frame = screen.frame
@@ -57,7 +78,8 @@ public final class OverlayWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .floating
+        // `.statusBar` level stays visible across Full-Screen Spaces while remaining below NSMenu popups (level 101)
+        panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.ignoresMouseEvents = true
         panel.acceptsMouseMovedEvents = true
@@ -83,7 +105,29 @@ public final class OverlayWindowController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.realignToMainScreen()
+                self?.realignToCurrentScreen()
+            }
+        }
+
+        let wsCenter = NSWorkspace.shared.notificationCenter
+        wsCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleActiveWorkspaceChanged()
+            }
+        }
+
+        wsCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.realignToCurrentScreen()
+                self?.handleActiveWorkspaceChanged()
             }
         }
     }
@@ -93,6 +137,9 @@ public final class OverlayWindowController {
         if let monitor = globalMouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let monitor = localMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 
     public func show() {
@@ -100,10 +147,22 @@ public final class OverlayWindowController {
         startDynamicHitTesting()
     }
 
-    private func realignToMainScreen() {
-        guard let screen = NSScreen.main else { return }
-        panel.setFrame(screen.frame, display: true)
-        scene.size = screen.frame.size
+    private func realignToCurrentScreen() {
+        let mouseLoc = NSEvent.mouseLocation
+        let activeScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) })
+            ?? NSScreen.main
+        guard let screen = activeScreen else { return }
+        if panel.frame != screen.frame {
+            panel.setFrame(screen.frame, display: true)
+            scene.size = screen.frame.size
+        }
+        panel.orderFrontRegardless()
+    }
+
+    private func handleActiveWorkspaceChanged() {
+        panel.orderFrontRegardless()
+        scene.handleWorkspaceNotification()
+        syncPointerState()
     }
 
     private func applyInteractionMode(_ mode: AppInteractionMode) {
@@ -111,7 +170,7 @@ public final class OverlayWindowController {
         case .companion:
             panel.allowKeyFocus = false
             panel.resignKey()
-            updateMousePassThrough()
+            syncPointerState()
 
         case .tennis:
             panel.allowKeyFocus = true
@@ -124,36 +183,45 @@ public final class OverlayWindowController {
 
     private func startDynamicHitTesting() {
         mousePollTimer?.invalidate()
-        mousePollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
+        // 60 Hz lightweight rect check eliminates any pass-through race before quick right-clicks!
+        mousePollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.updateMousePassThrough()
+                self?.syncPointerState()
             }
         }
 
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        ) { [weak self] _ in
             Task { @MainActor in
-                self?.handleGlobalMouseMove()
+                self?.syncPointerState()
             }
+        }
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        ) { [weak self] event in
+            self?.syncPointerState()
+            return event
         }
     }
 
-    private func handleGlobalMouseMove() {
-        let loc = NSEvent.mouseLocation
-        guard hypot(loc.x - lastMouseLoc.x, loc.y - lastMouseLoc.y) > 2.0 else { return }
-        lastMouseLoc = loc
-        updateMousePassThrough()
-        scene.notifyGlobalHover(at: loc, windowFrame: panel.frame)
+    private func scenePointForGlobalMouse(_ globalPoint: CGPoint) -> CGPoint {
+        let winPt = panel.convertPoint(fromScreen: globalPoint)
+        let viewPt = skView.convert(winPt, from: nil)
+        return scene.convertPoint(fromView: viewPt)
     }
 
-    private func updateMousePassThrough() {
+    private func syncPointerState() {
         if scene.mode == .tennis {
             if panel.ignoresMouseEvents {
                 panel.ignoresMouseEvents = false
             }
             return
         }
-        let loc = NSEvent.mouseLocation
-        let shouldCapture = scene.shouldCaptureMouse(at: loc, windowFrame: panel.frame)
+
+        let scenePt = scenePointForGlobalMouse(NSEvent.mouseLocation)
+        let shouldCapture = scene.updatePointerCaptureAndHover(atScenePoint: scenePt)
         if panel.ignoresMouseEvents == shouldCapture {
             panel.ignoresMouseEvents = !shouldCapture
         }

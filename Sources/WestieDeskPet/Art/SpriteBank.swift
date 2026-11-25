@@ -9,6 +9,10 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
     case westieSitTilt = "westie_sit_tilt"
     case westieSleep = "westie_sleep"
     case westieDangling = "westie_dangling"
+    case westiePeekCalm = "westie_peek_calm"
+    case westiePeekHover = "westie_peek_hover"
+    case westieLoafCalm = "westie_loaf_calm"
+    case westieChinLedge = "westie_chin_ledge"
 
     // Westie Tennis & Special
     case westieHoldingBall = "westie_holding_ball"

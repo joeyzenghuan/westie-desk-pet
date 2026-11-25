@@ -19,9 +19,10 @@ public enum SelfTestRunner {
 
         print("Running WestieDeskPet Self-Test Suite...")
 
-        // 1.Bundled Sprite Assets check
+        // 1. Bundled Sprite Assets check (all 22 pixel-art PNGs including v0.2 peek & loaf poses)
+        let totalExpected = SpriteAssetKey.allCases.count
         let missingSprites = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0) }
-        expect(missingSprites.isEmpty, "All 18 pixel-art PNG sprites resolve from bundle (missing: \(missingSprites.map(\.rawValue)))")
+        expect(missingSprites.isEmpty && totalExpected == 22, "All \(totalExpected) pixel-art PNG sprites resolve from bundle (missing: \(missingSprites.map(\.rawValue)))")
 
         // 2. Window Platform Occlusion & Dock Fallback
         let screen = CGRect(x: 0, y: 60, width: 1440, height: 840)
@@ -103,6 +104,34 @@ public enum SelfTestRunner {
             }
         }
         expect(aiReturned && rallyBall.lastHitter == .westie && rallyBall.vy < 0, "Westie AI predicts landing and returns ball across net")
+
+        // 7. Active Window Perch Layout: Non-fullscreen window exposes BOTH Top-Edge & Right-Edge Peek!
+        let normalLayout = PlatformPhysics.computeActiveWindowPerchLayout(
+            windowsFrontToBack: [selfWin, frontWin, backWin],
+            screenSize: CGSize(width: 1440, height: 932),
+            visibleScreenFrame: screen,
+            excludedPID: 777
+        )
+        expect(!normalLayout.isFullScreenMode, "Non-fullscreen active window is detected as windowed mode")
+        expect(normalLayout.topPerch?.windowID == 101 && (normalLayout.topPerch?.minX ?? 0) >= 278, "Top perch avoids macOS traffic-light buttons on left")
+        expect(normalLayout.windowRightPeek?.edgeX == 600, "Window right-edge peek anchors cleanly at activeWindow.maxX=600")
+
+        // 8. Full-Screen Space Detection -> Screen Right-Edge Peek!
+        let fullScreenWin = RawWindowInfo(windowID: 202, ownerPID: 600, ownerName: "Keynote", frame: CGRect(x: 0, y: 0, width: 1440, height: 932), isFrontmostApp: true)
+        let fullScreenLayout = PlatformPhysics.computeActiveWindowPerchLayout(
+            windowsFrontToBack: [fullScreenWin],
+            screenSize: CGSize(width: 1440, height: 932),
+            visibleScreenFrame: CGRect(x: 0, y: 0, width: 1440, height: 932),
+            excludedPID: 777
+        )
+        expect(fullScreenLayout.isFullScreenMode && fullScreenLayout.screenRightPeek.edgeX == 1440, "Full-screen mode switches Westie to right edge of screen (x=1440)")
+
+        // 9. Tennis Speed Presets & Context Menu Reliability
+        expect(TennisGameSpeed.slow.simulationScale < TennisGameSpeed.standard.simulationScale, "Slow tennis speed scales down ball & AI simulation pace")
+        expect(TennisGameSpeed.slow.faster() == .medium && TennisGameSpeed.medium.slower() == .slow, "Tennis speed +/- controls step cleanly between presets")
+        let scene = DesktopScene(size: CGSize(width: 1440, height: 900))
+        let ctxMenu = scene.buildDogContextMenu()
+        expect(ctxMenu.items.count >= 8, "Right-click context menu constructs rich menu items reliably")
 
         print("Self-test summary: \(passed) passed, \(failed) failed.")
         return failed == 0

@@ -9,6 +9,7 @@ public final class MenuBarController: NSObject {
     private var sleepModeItem: NSMenuItem!
     private var difficultyCasualItem: NSMenuItem!
     private var difficultyProItem: NSMenuItem!
+    private var speedMenuItems: [TennisGameSpeed: NSMenuItem] = [:]
 
     public init(scene: DesktopScene) {
         self.scene = scene
@@ -21,6 +22,9 @@ public final class MenuBarController: NSObject {
         scene.onModeChanged = { [weak self] mode in
             prevCallback?(mode)
             self?.syncMenuState(mode: mode)
+        }
+        scene.tennis.onGameSpeedChanged = { [weak self] spd in
+            self?.syncSpeedCheckmarks(selected: spd)
         }
     }
 
@@ -69,13 +73,22 @@ public final class MenuBarController: NSObject {
         menu.addItem(.separator())
 
         let summonItem = NSMenuItem(
-            title: "🐾 召唤到当前窗口顶边",
-            action: #selector(summonDog),
+            title: "📍 移到当前窗口正上方",
+            action: #selector(moveWindowTop),
             keyEquivalent: "w"
         )
         summonItem.keyEquivalentModifierMask = [.command, .shift]
         summonItem.target = self
         menu.addItem(summonItem)
+
+        let rightPeekItem = NSMenuItem(
+            title: "👀 移到右侧探头模式",
+            action: #selector(moveRightPeek),
+            keyEquivalent: "e"
+        )
+        rightPeekItem.keyEquivalentModifierMask = [.command, .shift]
+        rightPeekItem.target = self
+        menu.addItem(rightPeekItem)
 
         let treatItem = NSMenuItem(
             title: "🦴 投喂一根骨头饼干",
@@ -95,6 +108,22 @@ public final class MenuBarController: NSObject {
         menu.addItem(sleepModeItem)
 
         menu.addItem(.separator())
+
+        let speedSubmenu = NSMenu(title: "网球球速")
+        speedMenuItems.removeAll()
+        let currentSpeed = scene?.tennis.gameSpeed ?? .slow
+        for spd in TennisGameSpeed.allCases {
+            let suffix = (spd == .slow) ? " (默认)" : ""
+            let item = NSMenuItem(title: "\(spd.displayName)\(suffix)", action: #selector(selectSpeed(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = spd.rawValue
+            item.state = (spd == currentSpeed) ? .on : .off
+            speedSubmenu.addItem(item)
+            speedMenuItems[spd] = item
+        }
+        let speedParent = NSMenuItem(title: "⏱ 网球球速", action: nil, keyEquivalent: "")
+        speedParent.submenu = speedSubmenu
+        menu.addItem(speedParent)
 
         let diffSubmenu = NSMenu(title: "网球难度")
         difficultyCasualItem = NSMenuItem(title: "休闲小狗 (Casual)", action: #selector(selectCasual), keyEquivalent: "")
@@ -137,8 +166,27 @@ public final class MenuBarController: NSObject {
         scene?.triggerDogTennisInvite()
     }
 
-    @objc private func summonDog() {
-        scene?.summonDogToActiveWindow()
+    @objc private func moveWindowTop() {
+        scene?.companion.perchPreference = .auto
+        scene?.moveDogToZone(.windowTop)
+    }
+
+    @objc private func moveRightPeek() {
+        scene?.moveDogToZone(.windowRightPeek)
+    }
+
+    @objc private func selectSpeed(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let spd = TennisGameSpeed(rawValue: raw)
+        else { return }
+        scene?.tennis.gameSpeed = spd
+        syncSpeedCheckmarks(selected: spd)
+    }
+
+    private func syncSpeedCheckmarks(selected: TennisGameSpeed) {
+        for (spd, item) in speedMenuItems {
+            item.state = (spd == selected) ? .on : .off
+        }
     }
 
     @objc private func feedTreat() {

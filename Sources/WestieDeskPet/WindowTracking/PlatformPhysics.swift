@@ -61,6 +61,54 @@ public struct JumpArc: Sendable, Equatable {
     public let duration: TimeInterval
 }
 
+/// Describes where Westie can perch relative to the user's current active window or full-screen display.
+public struct ActiveWindowPerchLayout: Sendable, Equatable {
+    public let activeWindowID: UInt32?
+    public let activeWindowFrame: CGRect?
+    public let isFullScreenMode: Bool
+    /// Top-edge perch interval `(minX, maxX, y)` above the active window (`正上方`), avoiding left traffic lights.
+    public let topPerch: WindowPlatform?
+    /// Right-edge peek anchor `(edgeX, minY, maxY, defaultY)` on the right border of the active window (`右侧`).
+    public let windowRightPeek: RightEdgeAnchor?
+    /// Screen right-bezel peek anchor `(edgeX, minY, maxY, defaultY)` used in Full-Screen mode (`屏幕右边探头`).
+    public let screenRightPeek: RightEdgeAnchor
+
+    public init(
+        activeWindowID: UInt32?,
+        activeWindowFrame: CGRect?,
+        isFullScreenMode: Bool,
+        topPerch: WindowPlatform?,
+        windowRightPeek: RightEdgeAnchor?,
+        screenRightPeek: RightEdgeAnchor
+    ) {
+        self.activeWindowID = activeWindowID
+        self.activeWindowFrame = activeWindowFrame
+        self.isFullScreenMode = isFullScreenMode
+        self.topPerch = topPerch
+        self.windowRightPeek = windowRightPeek
+        self.screenRightPeek = screenRightPeek
+    }
+}
+
+public struct RightEdgeAnchor: Sendable, Equatable {
+    public let edgeX: CGFloat
+    public let minY: CGFloat
+    public let maxY: CGFloat
+    public let defaultY: CGFloat
+
+    public init(edgeX: CGFloat, minY: CGFloat, maxY: CGFloat, defaultY: CGFloat) {
+        self.edgeX = edgeX
+        self.minY = minY
+        self.maxY = maxY
+        self.defaultY = defaultY
+    }
+
+    public func clampedY(_ y: CGFloat) -> CGFloat {
+        guard maxY > minY else { return defaultY }
+        return min(max(y, minY), maxY)
+    }
+}
+
 public enum PlatformPhysics {
     public static let gravity: CGFloat = 1180.0
     public static let minSegmentWidth: CGFloat = 76.0
@@ -248,6 +296,109 @@ public enum PlatformPhysics {
             targetX: best.targetX,
             initialVelocity: CGVector(dx: vx, dy: vy),
             duration: duration
+        )
+    }
+
+    /// Computes the active-window companionship layout:
+    /// - Full-screen Space or maximized window -> `screenRightPeek` (peeking inward from right screen edge)
+    /// - Normal active window -> `topPerch` (`正上方`, right of traffic lights) and/or `windowRightPeek` (`右侧` upper-right border)
+    public static func computeActiveWindowPerchLayout(
+        windowsFrontToBack: [RawWindowInfo],
+        screenSize: CGSize,
+        visibleScreenFrame: CGRect,
+        excludedPID: Int32
+    ) -> ActiveWindowPerchLayout {
+        let screenRight = RightEdgeAnchor(
+            edgeX: screenSize.width,
+            minY: max(visibleScreenFrame.minY + 90, 110),
+            maxY: max(visibleScreenFrame.minY + 120, screenSize.height - 90),
+            defaultY: min(max(screenSize.height * 0.66, 160), screenSize.height - 110)
+        )
+
+        let standardWindows = windowsFrontToBack.filter { win in
+            win.ownerPID != excludedPID &&
+            win.layer == 0 &&
+            win.alpha >= 0.2 &&
+            win.frame.width >= 200 &&
+            win.frame.height >= 120
+        }
+
+        // Native macOS Full-Screen Space hides the menu bar so visibleScreenFrame approaches screenSize
+        let isNativeFullScreenSpace = visibleScreenFrame.height >= screenSize.height - 4
+
+        guard let activeWin = standardWindows.first(where: { $0.isFrontmostApp }) ?? standardWindows.first else {
+            return ActiveWindowPerchLayout(
+                activeWindowID: nil,
+                activeWindowFrame: nil,
+                isFullScreenMode: true,
+                topPerch: nil,
+                windowRightPeek: nil,
+                screenRightPeek: screenRight
+            )
+        }
+
+        let f = activeWin.frame
+        let topHeadroom = visibleScreenFrame.maxY - f.maxY
+        let rightHeadroom = screenSize.width - f.maxX
+
+        let coversScreen = (f.width >= screenSize.width - 24 && f.height >= visibleScreenFrame.height - 24)
+        let hasNeitherTopNorRightRoom = (topHeadroom < 26 && rightHeadroom < 36)
+
+        if isNativeFullScreenSpace || coversScreen || hasNeitherTopNorRightRoom {
+            return ActiveWindowPerchLayout(
+                activeWindowID: activeWin.windowID,
+                activeWindowFrame: f,
+                isFullScreenMode: true,
+                topPerch: nil,
+                windowRightPeek: nil,
+                screenRightPeek: screenRight
+            )
+        }
+
+        // 1. Top-edge perch (`正上方` — avoid leftmost 78pt where macOS red/yellow/green window buttons live!)
+        var topPlatform: WindowPlatform? = nil
+        if topHeadroom >= 26 {
+            let safeMinX = max(f.minX + 78, visibleScreenFrame.minX + 20)
+            let safeMaxX = min(f.maxX - 20, screenSize.width - 24)
+            if safeMaxX - safeMinX >= 70 {
+                topPlatform = WindowPlatform(
+                    windowID: activeWin.windowID,
+                    ownerName: activeWin.ownerName,
+                    minX: safeMinX,
+                    maxX: safeMaxX,
+                    y: f.maxY,
+                    windowMinX: f.minX,
+                    isDockFloor: false,
+                    isFrontmost: true
+                )
+            }
+        }
+
+        // 2. Window right-edge peek (`右侧` — upper-right vertical border of active window, just like user's screenshot!)
+        var rightPeek: RightEdgeAnchor? = nil
+        if rightHeadroom >= 36 && f.maxX >= 120 {
+            let maxY = min(f.maxY - 42, visibleScreenFrame.maxY - 44)
+            let minY = max(f.minY + 56, min(maxY - 8, f.maxY - 220))
+            if maxY >= minY {
+                let defaultY = max(minY, min(maxY, f.maxY - 68))
+                rightPeek = RightEdgeAnchor(
+                    edgeX: f.maxX,
+                    minY: minY,
+                    maxY: maxY,
+                    defaultY: defaultY
+                )
+            }
+        }
+
+        // If somehow neither fit (e.g., narrow edge case), fall back to screen-right peek
+        let fallbackFullScreen = (topPlatform == nil && rightPeek == nil)
+        return ActiveWindowPerchLayout(
+            activeWindowID: activeWin.windowID,
+            activeWindowFrame: f,
+            isFullScreenMode: fallbackFullScreen,
+            topPerch: topPlatform,
+            windowRightPeek: rightPeek,
+            screenRightPeek: screenRight
         )
     }
 }

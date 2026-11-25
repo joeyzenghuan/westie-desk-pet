@@ -6,6 +6,60 @@ public enum TennisDifficulty: String, CaseIterable, Sendable {
     case pro = "网球狗王"
 }
 
+public enum TennisGameSpeed: String, CaseIterable, Sendable {
+    case slow = "慢速"
+    case medium = "适中"
+    case standard = "标准"
+    case fast = "快速"
+
+    public var displayName: String {
+        switch self {
+        case .slow: return "🐢 慢速"
+        case .medium: return "🎾 适中"
+        case .standard: return "⚡️ 标准"
+        case .fast: return "🔥 快速"
+        }
+    }
+
+    /// Scales ball flight & AI movement `dt` while keeping trajectory physics 100% accurate.
+    public var simulationScale: CGFloat {
+        switch self {
+        case .slow: return 0.62
+        case .medium: return 0.80
+        case .standard: return 1.00
+        case .fast: return 1.20
+        }
+    }
+
+    /// Keeps human WASD responsive even in slow-ball mode so movement never feels sluggish.
+    public var playerMoveScale: CGFloat {
+        switch self {
+        case .slow: return 0.88
+        case .medium: return 0.94
+        case .standard: return 1.00
+        case .fast: return 1.08
+        }
+    }
+
+    public func next() -> TennisGameSpeed {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self) else { return .slow }
+        return all[(idx + 1) % all.count]
+    }
+
+    public func slower() -> TennisGameSpeed {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self), idx > 0 else { return .slow }
+        return all[idx - 1]
+    }
+
+    public func faster() -> TennisGameSpeed {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self), idx + 1 < all.count else { return .fast }
+        return all[idx + 1]
+    }
+}
+
 public struct WestieOpponentState: Sendable {
     public var x: CGFloat = 0
     public var y: CGFloat = 195
