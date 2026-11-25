@@ -1,0 +1,27 @@
+# SwiftPM / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# Packaged app output & raw generation scratch
+dist/
+build/
+assets_raw/
+
+# Secrets & local configs (NEVER commit)
+.env
+.env.*
+.config
+*.key
+*.pem
+credentials.json
+secrets.yaml
+
+# macOS / Python
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
