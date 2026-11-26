@@ -20,8 +20,11 @@ assets_raw/
 credentials.json
 secrets.yaml
 
-# macOS / Python
+# macOS / Python / .NET
 .DS_Store
 __pycache__/
 *.pyc
 .venv/
+bin/
+obj/
+*.user

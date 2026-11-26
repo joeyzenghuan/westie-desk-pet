@@ -1,0 +1,120 @@
+<Window x:Class="WestieDeskPet.Windows.UI.PreferencesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="⚙️ 桌面宠物陪伴偏好设置"
+        Width="470" Height="740"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Topmost="True"
+        Background="#F6F7F9"
+        FontFamily="Microsoft YaHei UI, Segoe UI">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,4,0">
+
+                <!-- Section 0: Pet Species & Size -->
+                <GroupBox Header="🐾 宠物角色与外观大小" Padding="10" Margin="0,0,0,10">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <RadioButton x:Name="WestieRadio" Content="🐶 西高地小狗" Margin="0,0,18,0" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="CatRadio" Content="🐱 金渐层小猫" Checked="PetSpeciesRadio_Changed" />
+                        </StackPanel>
+
+                        <DockPanel Margin="0,0,0,4">
+                            <TextBlock Text="宠物尺寸" DockPanel.Dock="Left" />
+                            <TextBlock x:Name="ScaleValueText" Text="100%" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                        </DockPanel>
+                        <Slider x:Name="ScaleSlider" Minimum="0.60" Maximum="1.60" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="ScaleSlider_ValueChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="75%" Padding="8,2" Margin="0,0,6,0" Click="ScalePreset_Click" Tag="0.75" />
+                            <Button Content="100%" Padding="8,2" Margin="0,0,6,0" Click="ScalePreset_Click" Tag="1.0" />
+                            <Button Content="125%" Padding="8,2" Margin="0,0,6,0" Click="ScalePreset_Click" Tag="1.25" />
+                            <Button Content="150%" Padding="8,2" Click="ScalePreset_Click" Tag="1.50" />
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Section 1: Window Switch & Perch Preference -->
+                <GroupBox Header="🕵️ 换窗潜行节奏" Padding="10" Margin="0,0,0,10">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <TextBlock Text="切窗等待时长" DockPanel.Dock="Left" />
+                            <TextBlock x:Name="SwitchDelayText" Text="5 秒" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                        </DockPanel>
+                        <Slider x:Name="SwitchDelaySlider" Minimum="0" Maximum="15" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SwitchDelaySlider_ValueChanged" />
+                        <TextBlock Text="当宠物在窗口上方（或开启跟随窗口右侧）时，切到新窗口停留超过该时间才会悄悄切换。" TextWrapping="Wrap" FontSize="11" Foreground="#666" Margin="0,4,0,8" />
+
+                        <DockPanel>
+                            <TextBlock Text="陪伴位置偏好" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <ComboBox x:Name="PerchPreferenceCombo" SelectionChanged="PerchPreferenceCombo_SelectionChanged" />
+                        </DockPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Section 2: Climb-to-Top & Animation Routine -->
+                <GroupBox Header="🎬 同窗口专注陪伴与动态特效" Padding="10" Margin="0,0,0,10">
+                    <StackPanel>
+                        <CheckBox x:Name="ClimbEnabledCheck" Content="停留满时长后自动爬上顶栏互动" Margin="0,0,0,8" Checked="ClimbEnabledCheck_Changed" Unchecked="ClimbEnabledCheck_Changed" />
+
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="爬顶动态特效" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <ComboBox x:Name="ClimbRoutineCombo" SelectionChanged="ClimbRoutineCombo_SelectionChanged" />
+                        </DockPanel>
+
+                        <DockPanel Margin="0,0,0,4">
+                            <TextBlock Text="爬上顶栏触发间隔" DockPanel.Dock="Left" />
+                            <TextBlock x:Name="ClimbIntervalText" Text="1 分钟" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                        </DockPanel>
+                        <Slider x:Name="ClimbIntervalSlider" Minimum="3" Maximum="300" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="ClimbIntervalSlider_ValueChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,8">
+                            <Button Content="3 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="3" />
+                            <Button Content="15 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="15" />
+                            <Button Content="30 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="30" />
+                            <Button Content="1 分钟" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="60" />
+                            <Button Content="3 分钟" Padding="8,2" Click="ClimbPreset_Click" Tag="180" />
+                        </StackPanel>
+
+                        <TextBlock Text="默认安静探头在屏幕右侧边；在当前窗口停留满时长后会自动爬上顶栏上演「悠闲巡逻」或「⚡ 闪身步」，之后打哈欠睡觉。" TextWrapping="Wrap" FontSize="11" Foreground="#666" />
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Section 3: Top-Bar Tap Pose Cycle -->
+                <GroupBox Header="👆 窗顶单击切换姿态" Padding="10" Margin="0,0,0,10">
+                    <StackPanel>
+                        <UniformGrid Columns="2" Margin="0,0,0,6">
+                            <CheckBox x:Name="TapSitCheck" Content="😊 微笑歪头坐" Margin="0,0,0,6" Checked="TopTapPose_Changed" Unchecked="TopTapPose_Changed" />
+                            <CheckBox x:Name="TapLoafCheck" Content="🐾 安静趴卧" Margin="0,0,0,6" Checked="TopTapPose_Changed" Unchecked="TopTapPose_Changed" />
+                            <CheckBox x:Name="TapBigHeadCheck" Content="🐶 大头趴窗盯镜头" Checked="TopTapPose_Changed" Unchecked="TopTapPose_Changed" />
+                            <CheckBox x:Name="TapSleepCheck" Content="💤 团成团子睡觉" Checked="TopTapPose_Changed" Unchecked="TopTapPose_Changed" />
+                        </UniformGrid>
+                        <TextBlock Text="在窗口顶栏轻点宠物时，会在已勾选的姿态之间循环切换（至少保留 1 项）。" TextWrapping="Wrap" FontSize="11" Foreground="#666" />
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Section 4: Zero-Intrusion Details -->
+                <GroupBox Header="✨ 零打扰微交互细节" Padding="10" Margin="0,0,0,6">
+                    <StackPanel>
+                        <CheckBox x:Name="ShyRetreatCheck" Content="防误点害羞缩头（鼠标高速划过微缩，慢靠近才探头）" Margin="0,0,0,6" Checked="MicroToggle_Changed" Unchecked="MicroToggle_Changed" />
+                        <CheckBox x:Name="TypingPauseCheck" Content="打字免打扰（持续输入时暂缓爬顶，停手后再打招呼）" Margin="0,0,0,6" Checked="MicroToggle_Changed" Unchecked="MicroToggle_Changed" />
+                        <CheckBox x:Name="ClimbPawsCheck" Content="顶栏先搭爪探头（先露耳尖小爪张望 3 秒，再翻身上顶）" Checked="MicroToggle_Changed" Unchecked="MicroToggle_Changed" />
+                    </StackPanel>
+                </GroupBox>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Bottom Action Bar -->
+        <DockPanel Grid.Row="1" Margin="0,10,0,0">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <Button Content="恢复默认" Padding="10,4" Margin="0,0,6,0" Click="Reset_Click" />
+                <Button Content="🐾 预览爬顶" Padding="10,4" Margin="0,0,6,0" Click="PreviewClimb_Click" />
+                <Button Content="⚡ 预览闪身步" Padding="10,4" Click="PreviewFlash_Click" />
+            </StackPanel>
+            <Button Content="完成" Padding="16,4" IsDefault="True" HorizontalAlignment="Right" Click="Close_Click" />
+        </DockPanel>
+    </Grid>
+</Window>

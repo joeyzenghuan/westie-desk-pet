@@ -1,0 +1,37 @@
+name: Build Windows App
+
+on:
+  push:
+    branches: [main, "feat/windows-port"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Run Core engine unit tests
+        run: dotnet test windows/WestieDeskPet.Tests/WestieDeskPet.Tests.csproj -c Release
+
+      - name: Publish portable self-contained win-x64 package
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -Runtime win-x64 -SelfContained
+
+      - name: Zip Windows portable release
+        shell: pwsh
+        run: Compress-Archive -Path dist/windows-win-x64/* -DestinationPath dist/WestieDeskPet-Windows-x64.zip -Force
+
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WestieDeskPet-Windows-x64
+          path: dist/WestieDeskPet-Windows-x64.zip

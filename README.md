@@ -1,6 +1,6 @@
 # Westie Desk Pet 🐶🐱🎾
 
-一款原生轻量化 **macOS 桌面陪伴宠物（西高地小狗 / 金渐层小猫双角色切换）+ 2.5D 网球对打** 小应用（Swift 6 + AppKit + SpriteKit，无需辅助功能或录屏权限）。
+一款原生轻量化 **macOS & Windows 跨平台桌面陪伴宠物（西高地小狗 / 金渐层小猫双角色切换）+ 2.5D 网球对打** 小应用（macOS：Swift 6 + AppKit + SpriteKit；Windows：.NET 8 + WPF + Win32 DWM，共享同一套 82 张像素精灵资产，无需管理员/辅助功能/录屏权限）。
 
 平时它是一只安静探头在屏幕右侧边的像素风小狗或金渐层小猫，不挡窗口正文；当你专心停留在某个窗口一段时间后，它会悄悄从顶栏后方探头张望、翻身跳着走或跳一段魔性「⚡ 闪身步」，最后打个哈欠趴下睡觉；想放松一局时，随时展开半透明桌面网球场，用 **`WASD` + 鼠标** 来一场 5 分制网球对决！
 
@@ -43,6 +43,8 @@
 
 ## 🚀 构建与运行
 
+### macOS（Swift 6 + AppKit + SpriteKit）
+
 环境要求：**macOS 14.0+**，安装 Xcode 或 Xcode Command Line Tools（Swift 6.0+）。
 
 ```bash
@@ -61,6 +63,30 @@ open dist/WestieDeskPet.app
 ```bash
 swift run WestieDeskPet --tennis
 ```
+
+### Windows 10 / 11（.NET 8 + WPF + Win32 DWM）
+
+Windows 版位于 `windows/` 目录（`WestieDeskPet.Core` + `WestieDeskPet.Windows` + `WestieDeskPet.Tests`），直接复用仓库内 82 张共享 PNG 精灵（零资产冗余），通过 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 精准贴齐窗口可见边缘、`WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` 丝滑穿透不占任务栏/Alt+Tab，并提供系统托盘图标与原生偏好设置弹窗：
+
+```powershell
+# 在 Windows 上运行测试并打包单文件便携版（含 .NET 运行时，解压即用）
+.\scripts\build_windows.ps1 -Runtime win-x64 -SelfContained
+
+# 启动（支持 --tennis 直接进入网球模式）
+.\dist\windows-win-x64\WestieDeskPet.exe
+```
+
+也可以在 **macOS 上直接交叉编译** Windows 可执行文件：
+
+```bash
+# 运行核心引擎 xUnit 单元测试并交叉编译出 dist/windows-win-x64/WestieDeskPet.exe
+./scripts/build_windows_from_mac.sh win-x64 false
+
+# 如需打不依赖 .NET 运行时的独立便携包（带 -SelfContained）
+./scripts/build_windows_from_mac.sh win-x64 true
+```
+
+同时已配置 GitHub Actions（`.github/workflows/windows-build.yml`），推送分支即可在 `windows-latest` 自动跑测试并产出 `WestieDeskPet-Windows-x64.zip` 下载包。
 
 ---
 

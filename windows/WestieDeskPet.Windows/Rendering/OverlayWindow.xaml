@@ -1,0 +1,60 @@
+<Window x:Class="WestieDeskPet.Windows.Rendering.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        ResizeMode="NoResize"
+        RenderOptions.BitmapScalingMode="NearestNeighbor"
+        UseLayoutRounding="True">
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <!-- Companion Layer -->
+        <Canvas x:Name="CompanionCanvas" Background="Transparent">
+            <!-- Clipped Pet Container (equivalent to SpriteKit SKCropNode) -->
+            <Canvas x:Name="PetClipCanvas" Background="Transparent">
+                <Image x:Name="FadeOutPetImage"
+                       Visibility="Collapsed"
+                       RenderOptions.BitmapScalingMode="NearestNeighbor"
+                       IsHitTestVisible="False" />
+                <Image x:Name="PrimaryPetImage"
+                       Visibility="Visible"
+                       RenderOptions.BitmapScalingMode="NearestNeighbor" />
+            </Canvas>
+
+            <!-- Dropped Snack Prop -->
+            <Image x:Name="TreatImage"
+                   Visibility="Collapsed"
+                   RenderOptions.BitmapScalingMode="NearestNeighbor"
+                   IsHitTestVisible="False" />
+
+            <!-- Crumb & Sparkle Particles Layer -->
+            <Canvas x:Name="ParticleCanvas" IsHitTestVisible="False" />
+
+            <!-- Clickable Tennis Invite Pill -->
+            <Border x:Name="InviteBadge"
+                    Visibility="Collapsed"
+                    Width="118" Height="28"
+                    CornerRadius="9"
+                    Background="#F01C613D"
+                    BorderBrush="#F2C7FA4D"
+                    BorderThickness="1.5"
+                    Cursor="Hand">
+                <TextBlock Text="🎾 来打网球!"
+                           Foreground="White"
+                           FontFamily="Consolas, Microsoft YaHei UI"
+                           FontWeight="Bold"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" />
+            </Border>
+        </Canvas>
+
+        <!-- 2.5D Tennis Layer -->
+        <Grid x:Name="TennisLayer" Visibility="Collapsed" Background="#7A0B1712">
+            <Canvas x:Name="TennisCanvas" Background="Transparent" />
+        </Grid>
+    </Grid>
+</Window>
