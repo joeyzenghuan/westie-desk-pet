@@ -5,10 +5,56 @@ import Foundation
 public struct ActiveWorkspaceSnapshot: Sendable {
     public let platforms: [WindowPlatform]
     public let perchLayout: ActiveWindowPerchLayout
+    public let windowsFrontToBack: [RawWindowInfo]
+    public let windowFramesByID: [UInt32: CGRect]
+    public let screenSize: CGSize
+    public let visibleScreenFrame: CGRect
     public let frontmostAppName: String
     public let frontmostBundleID: String
     public let isMeetingActive: Bool
     public let isCodingActive: Bool
+    public let secondsSinceLastKeyDown: TimeInterval
+
+    public init(
+        platforms: [WindowPlatform],
+        perchLayout: ActiveWindowPerchLayout,
+        windowsFrontToBack: [RawWindowInfo] = [],
+        windowFramesByID: [UInt32: CGRect] = [:],
+        screenSize: CGSize = CGSize(width: 1440, height: 900),
+        visibleScreenFrame: CGRect = CGRect(x: 0, y: 0, width: 1440, height: 875),
+        frontmostAppName: String,
+        frontmostBundleID: String,
+        isMeetingActive: Bool,
+        isCodingActive: Bool,
+        secondsSinceLastKeyDown: TimeInterval = 999
+    ) {
+        self.platforms = platforms
+        self.perchLayout = perchLayout
+        self.windowsFrontToBack = windowsFrontToBack
+        self.windowFramesByID = windowFramesByID
+        self.screenSize = screenSize
+        self.visibleScreenFrame = visibleScreenFrame
+        self.frontmostAppName = frontmostAppName
+        self.frontmostBundleID = frontmostBundleID
+        self.isMeetingActive = isMeetingActive
+        self.isCodingActive = isCodingActive
+        self.secondsSinceLastKeyDown = secondsSinceLastKeyDown
+    }
+
+    public func perchLayout(forWindowID windowID: UInt32) -> ActiveWindowPerchLayout? {
+        if perchLayout.activeWindowID == windowID {
+            return perchLayout
+        }
+        guard let frame = windowFramesByID[windowID] else { return nil }
+        let ownerName = windowsFrontToBack.first(where: { $0.windowID == windowID })?.ownerName ?? "Window"
+        return PlatformPhysics.computeSingleWindowPerchLayout(
+            windowID: windowID,
+            ownerName: ownerName,
+            windowFrame: frame,
+            screenSize: screenSize,
+            visibleScreenFrame: visibleScreenFrame
+        )
+    }
 }
 
 @MainActor
@@ -113,84 +159,148 @@ public final class WindowPlatformTracker {
             excludedPID: ownPID
         )
 
+        var framesByID: [UInt32: CGRect] = [:]
+        framesByID.reserveCapacity(parsedWindows.count)
+        for win in parsedWindows where win.ownerPID != ownPID && win.layer == 0 && win.alpha >= 0.2 {
+            framesByID[win.windowID] = win.frame
+        }
+
+        let secsSinceKey = Self.querySecondsSinceLastKeyDown()
+
         return ActiveWorkspaceSnapshot(
             platforms: platforms,
             perchLayout: perchLayout,
+            windowsFrontToBack: parsedWindows,
+            windowFramesByID: framesByID,
+            screenSize: screenFrame.size,
+            visibleScreenFrame: localVisibleFrame,
             frontmostAppName: frontName,
             frontmostBundleID: frontBundle,
             isMeetingActive: isMeeting,
-            isCodingActive: isCoding
+            isCodingActive: isCoding,
+            secondsSinceLastKeyDown: secsSinceKey
         )
     }
 
+    public static func querySecondsSinceLastKeyDown() -> TimeInterval {
+        let secs = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+        return secs.isFinite && secs >= 0 ? secs : 999.0
+    }
+
     /// Ultra-lightweight O(1) single-window query (~10µs) via `.optionIncludingWindow`.
-    /// Keeps Westie locked at 60/120Hz ProMotion while the user drags or resizes the active window!
+    /// Keeps Westie locked at 60/120Hz ProMotion while the user drags or resizes the active (or anchored) window!
     public func fastRefreshActiveWindow(
         in previous: ActiveWorkspaceSnapshot,
-        for screen: NSScreen
+        for screen: NSScreen,
+        trackedWindowID: UInt32 = 0
     ) -> ActiveWorkspaceSnapshot {
-        guard let activeID = previous.perchLayout.activeWindowID, activeID != 0 else {
-            return previous
-        }
-
-        guard let rawList = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(activeID)) as? [[String: Any]],
-              let entry = rawList.first,
-              let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary
-        else {
-            return previous
-        }
-
-        let isOnScreen = (entry[kCGWindowIsOnscreen as String] as? Bool) ?? true
-        if !isOnScreen {
-            return previous
-        }
-
-        var cgBounds = CGRect.zero
-        guard CGRectMakeWithDictionaryRepresentation(boundsDict, &cgBounds) else {
-            return previous
-        }
-
         let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
         let screenFrame = screen.frame
-        let globalBottomY = primaryScreenHeight - (cgBounds.origin.y + cgBounds.size.height)
-        let localRect = CGRect(
-            x: cgBounds.origin.x - screenFrame.minX,
-            y: globalBottomY - screenFrame.minY,
-            width: cgBounds.size.width,
-            height: cgBounds.size.height
-        )
-
-        if let oldFrame = previous.perchLayout.activeWindowFrame,
-           abs(oldFrame.origin.x - localRect.origin.x) < 0.05,
-           abs(oldFrame.origin.y - localRect.origin.y) < 0.05,
-           abs(oldFrame.size.width - localRect.size.width) < 0.05,
-           abs(oldFrame.size.height - localRect.size.height) < 0.05
-        {
-            return previous
-        }
-
         let localVisibleFrame = CGRect(
             x: screen.visibleFrame.minX - screenFrame.minX,
             y: screen.visibleFrame.minY - screenFrame.minY,
             width: screen.visibleFrame.width,
             height: screen.visibleFrame.height
         )
-        let ownerName = (entry[kCGWindowOwnerName as String] as? String) ?? previous.frontmostAppName
-        let updatedLayout = PlatformPhysics.computeSingleWindowPerchLayout(
-            windowID: activeID,
-            ownerName: ownerName,
-            windowFrame: localRect,
-            screenSize: screenFrame.size,
-            visibleScreenFrame: localVisibleFrame
-        )
+
+        var updatedLayout = previous.perchLayout
+        var updatedFrames = previous.windowFramesByID
+        var updatedWindows = previous.windowsFrontToBack
+        var didChange = false
+
+        func refreshWindowFrame(_ winID: UInt32) -> (frame: CGRect, ownerName: String)? {
+            guard winID != 0,
+                  let rawList = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(winID)) as? [[String: Any]],
+                  let entry = rawList.first,
+                  let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary
+            else {
+                return nil
+            }
+            let isOnScreen = (entry[kCGWindowIsOnscreen as String] as? Bool) ?? true
+            guard isOnScreen else { return nil }
+            var cgBounds = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &cgBounds) else { return nil }
+            let globalBottomY = primaryScreenHeight - (cgBounds.origin.y + cgBounds.size.height)
+            let localRect = CGRect(
+                x: cgBounds.origin.x - screenFrame.minX,
+                y: globalBottomY - screenFrame.minY,
+                width: cgBounds.size.width,
+                height: cgBounds.size.height
+            )
+            let owner = (entry[kCGWindowOwnerName as String] as? String) ?? previous.frontmostAppName
+            return (localRect, owner)
+        }
+
+        if let activeID = previous.perchLayout.activeWindowID, activeID != 0,
+           let refreshed = refreshWindowFrame(activeID)
+        {
+            let oldFrame = previous.perchLayout.activeWindowFrame
+            let moved = oldFrame.map {
+                abs($0.origin.x - refreshed.frame.origin.x) >= 0.05
+                    || abs($0.origin.y - refreshed.frame.origin.y) >= 0.05
+                    || abs($0.size.width - refreshed.frame.size.width) >= 0.05
+                    || abs($0.size.height - refreshed.frame.size.height) >= 0.05
+            } ?? true
+
+            if moved {
+                didChange = true
+                updatedFrames[activeID] = refreshed.frame
+                updatedLayout = PlatformPhysics.computeSingleWindowPerchLayout(
+                    windowID: activeID,
+                    ownerName: refreshed.ownerName,
+                    windowFrame: refreshed.frame,
+                    screenSize: screenFrame.size,
+                    visibleScreenFrame: localVisibleFrame
+                )
+                if let idx = updatedWindows.firstIndex(where: { $0.windowID == activeID }) {
+                    let old = updatedWindows[idx]
+                    updatedWindows[idx] = RawWindowInfo(
+                        windowID: old.windowID,
+                        ownerPID: old.ownerPID,
+                        ownerName: old.ownerName,
+                        layer: old.layer,
+                        alpha: old.alpha,
+                        frame: refreshed.frame,
+                        isFrontmostApp: old.isFrontmostApp
+                    )
+                }
+            }
+        }
+
+        // Also keep old anchored window refreshed during the 5s dwell delay so Westie never drifts!
+        if trackedWindowID != 0 && trackedWindowID != previous.perchLayout.activeWindowID,
+           let refreshed = refreshWindowFrame(trackedWindowID)
+        {
+            let oldFrame = previous.windowFramesByID[trackedWindowID]
+            let moved = oldFrame.map {
+                abs($0.origin.x - refreshed.frame.origin.x) >= 0.05
+                    || abs($0.origin.y - refreshed.frame.origin.y) >= 0.05
+                    || abs($0.size.width - refreshed.frame.size.width) >= 0.05
+                    || abs($0.size.height - refreshed.frame.size.height) >= 0.05
+            } ?? true
+            if moved {
+                didChange = true
+                updatedFrames[trackedWindowID] = refreshed.frame
+            }
+        }
+
+        let secsSinceKey = Self.querySecondsSinceLastKeyDown()
+        if !didChange && abs(secsSinceKey - previous.secondsSinceLastKeyDown) < 0.2 {
+            return previous
+        }
 
         return ActiveWorkspaceSnapshot(
             platforms: previous.platforms,
             perchLayout: updatedLayout,
+            windowsFrontToBack: updatedWindows,
+            windowFramesByID: updatedFrames,
+            screenSize: screenFrame.size,
+            visibleScreenFrame: localVisibleFrame,
             frontmostAppName: previous.frontmostAppName,
             frontmostBundleID: previous.frontmostBundleID,
             isMeetingActive: previous.isMeetingActive,
-            isCodingActive: previous.isCodingActive
+            isCodingActive: previous.isCodingActive,
+            secondsSinceLastKeyDown: secsSinceKey
         )
     }
 }

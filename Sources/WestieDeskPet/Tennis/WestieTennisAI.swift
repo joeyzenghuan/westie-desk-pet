@@ -4,6 +4,15 @@ import Foundation
 public enum TennisDifficulty: String, CaseIterable, Sendable {
     case casual = "休闲小狗"
     case pro = "网球狗王"
+
+    public func displayName(for species: PetSpecies) -> String {
+        switch (self, species) {
+        case (.casual, .westie): return "休闲小狗"
+        case (.pro, .westie): return "网球狗王"
+        case (.casual, .goldenCat): return "休闲小猫"
+        case (.pro, .goldenCat): return "网球猫王"
+        }
+    }
 }
 
 public enum TennisGameSpeed: String, CaseIterable, Sendable {

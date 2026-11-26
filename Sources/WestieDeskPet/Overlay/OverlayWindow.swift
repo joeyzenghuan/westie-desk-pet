@@ -1,5 +1,9 @@
 import AppKit
+import CoreGraphics
+import OSLog
 import SpriteKit
+
+private let inputLogger = Logger(subsystem: "com.joeyzenghuan.westie-desk-pet", category: "input")
 
 @MainActor
 public final class InteractiveSKView: SKView {
@@ -10,6 +14,8 @@ public final class InteractiveSKView: SKView {
             desiredCursor.set()
         }
     }
+
+    public var onRequestCompanionContextMenu: ((NSEvent) -> Void)?
 
     public override var acceptsFirstResponder: Bool { true }
 
@@ -30,12 +36,20 @@ public final class InteractiveSKView: SKView {
         scene?.mouseMoved(with: event)
     }
 
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        guard let desktopScene = scene as? DesktopScene, desktopScene.mode == .companion else {
+            return nil
+        }
+        desktopScene.companion.prepareForContextMenu()
+        return desktopScene.buildDogContextMenu()
+    }
+
     public override func mouseDown(with event: NSEvent) {
         if let desktopScene = scene as? DesktopScene,
            desktopScene.mode == .companion,
            event.modifierFlags.contains(.control)
         {
-            popCompanionContextMenu(with: event, desktopScene: desktopScene)
+            onRequestCompanionContextMenu?(event)
             return
         }
         super.mouseDown(with: event)
@@ -55,16 +69,10 @@ public final class InteractiveSKView: SKView {
 
     public override func rightMouseDown(with event: NSEvent) {
         if let desktopScene = scene as? DesktopScene, desktopScene.mode == .companion {
-            popCompanionContextMenu(with: event, desktopScene: desktopScene)
+            onRequestCompanionContextMenu?(event)
             return
         }
         scene?.rightMouseDown(with: event)
-    }
-
-    private func popCompanionContextMenu(with event: NSEvent, desktopScene: DesktopScene) {
-        let menu = desktopScene.buildDogContextMenu()
-        let viewPoint = convert(event.locationInWindow, from: nil)
-        menu.popUp(positioning: nil, at: viewPoint, in: self)
     }
 
     public override func keyDown(with event: NSEvent) {
@@ -80,9 +88,22 @@ public final class InteractiveSKView: SKView {
 @MainActor
 public final class OverlayPanel: NSPanel {
     public var allowKeyFocus: Bool = false
+    public var onRightMouseDownEvent: ((NSEvent) -> Bool)?
 
     public override var canBecomeKey: Bool { allowKeyFocus }
     public override var canBecomeMain: Bool { false }
+
+    public override func sendEvent(_ event: NSEvent) {
+        let isContextTrigger = (event.type == .rightMouseDown)
+            || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+        if isContextTrigger {
+            inputLogger.notice("OverlayPanel.sendEvent contextTrigger type=\(event.type.rawValue, privacy: .public) loc=\(event.locationInWindow.x, privacy: .public),\(event.locationInWindow.y, privacy: .public)")
+            if onRightMouseDownEvent?(event) == true {
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
 }
 
 @MainActor
@@ -94,6 +115,10 @@ public final class OverlayWindowController {
     private nonisolated(unsafe) var mousePollTimer: Timer?
     private nonisolated(unsafe) var globalMouseMonitor: Any?
     private nonisolated(unsafe) var localMouseMonitor: Any?
+    private var lastContextMenuPopTime: TimeInterval = 0
+    private var wasHardwareRightButtonDown: Bool = false
+    private var pendingHardwareRightClickOnDog: Bool = false
+    private var hardwareRightClickStartTime: TimeInterval = 0
 
     public init(screen: NSScreen) {
         let frame = screen.frame
@@ -122,8 +147,19 @@ public final class OverlayWindowController {
         skView.autoresizingMask = [.width, .height]
 
         scene = DesktopScene(size: frame.size)
+        scene.targetScreen = screen
         panel.contentView = skView
         skView.presentScene(scene)
+
+        panel.onRightMouseDownEvent = { [weak self] event in
+            guard let self, self.scene.mode == .companion else { return false }
+            self.presentCompanionContextMenu(with: event, source: "panel.sendEvent")
+            return true
+        }
+
+        skView.onRequestCompanionContextMenu = { [weak self] event in
+            self?.presentCompanionContextMenu(with: event, source: "skView")
+        }
 
         scene.onModeChanged = { [weak self] mode in
             self?.applyInteractionMode(mode)
@@ -144,7 +180,10 @@ public final class OverlayWindowController {
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            let activatedPID = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            guard activatedPID != ownPID else { return }
             MainActor.assumeIsolated {
                 self?.handleActiveWorkspaceChanged()
             }
@@ -182,20 +221,57 @@ public final class OverlayWindowController {
         let activeScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) })
             ?? NSScreen.main
         guard let screen = activeScreen else { return }
+        scene.targetScreen = screen
         let targetFPS = max(60, screen.maximumFramesPerSecond)
         if skView.preferredFramesPerSecond != targetFPS {
             skView.preferredFramesPerSecond = targetFPS
         }
         if panel.frame != screen.frame {
             panel.setFrame(screen.frame, display: true)
+            skView.frame = NSRect(origin: .zero, size: screen.frame.size)
             scene.size = screen.frame.size
         }
         panel.orderFrontRegardless()
     }
 
     private func handleActiveWorkspaceChanged() {
+        realignToCurrentScreen()
         panel.orderFrontRegardless()
         scene.handleWorkspaceNotification()
+        syncPointerState()
+    }
+
+    private var isContextMenuOpen: Bool = false
+
+    public func presentCompanionContextMenu(with triggeringEvent: NSEvent? = nil, source: String = "unknown") {
+        guard scene.mode == .companion, !isContextMenuOpen else {
+            inputLogger.notice("presentCompanionContextMenu skipped source=\(source, privacy: .public) open=\(self.isContextMenuOpen, privacy: .public)")
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastContextMenuPopTime > 0.22 else { return }
+        lastContextMenuPopTime = now
+        isContextMenuOpen = true
+        pendingHardwareRightClickOnDog = false
+
+        let screenMouse = NSEvent.mouseLocation
+        inputLogger.notice("presentCompanionContextMenu OPEN source=\(source, privacy: .public) mouse=\(screenMouse.x, privacy: .public),\(screenMouse.y, privacy: .public) panelFrame=\(self.panel.frame.origin.x, privacy: .public),\(self.panel.frame.origin.y, privacy: .public),\(self.panel.frame.width, privacy: .public),\(self.panel.frame.height, privacy: .public)")
+
+        scene.companion.prepareForContextMenu()
+        let menu = scene.buildDogContextMenu()
+
+        let t0 = ProcessInfo.processInfo.systemUptime
+        if let triggeringEvent, triggeringEvent.window === panel {
+            NSMenu.popUpContextMenu(menu, with: triggeringEvent, for: skView)
+        } else {
+            // Hardware release-edge or global monitor fallback: right button is already up or outside our window,
+            // so screen-coordinate `popUp(positioning:at:in:nil)` pops cleanly on ANY monitor without needing focus!
+            _ = menu.popUp(positioning: nil, at: screenMouse, in: nil)
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - t0
+        inputLogger.notice("presentCompanionContextMenu CLOSED source=\(source, privacy: .public) openDuration=\(elapsed, privacy: .public)s")
+
+        isContextMenuOpen = false
         syncPointerState()
     }
 
@@ -228,13 +304,35 @@ public final class OverlayWindowController {
         mousePollTimer = timer
 
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
-        ) { [weak self] _ in
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .rightMouseDown, .rightMouseUp]
+        ) { [weak self] event in
+            let isRightUp = (event.type == .rightMouseUp)
+            let isRightDown = (event.type == .rightMouseDown)
             Task { @MainActor in
-                self?.syncPointerState()
+                guard let self else { return }
+                self.syncPointerState()
+                if isRightDown {
+                    let mouse = NSEvent.mouseLocation
+                    let scenePt = self.scenePointForGlobalMouse(mouse)
+                    let hr = self.scene.companion.interactiveHitRect()
+                    let over = self.scene.isPointOverDogForContextMenu(scenePt)
+                    inputLogger.notice("globalMonitor rightMouseDown overDog=\(over, privacy: .public) ignoresMouse=\(self.panel.ignoresMouseEvents, privacy: .public) mouse=(\(mouse.x, privacy: .public),\(mouse.y, privacy: .public)) scenePt=(\(scenePt.x, privacy: .public),\(scenePt.y, privacy: .public)) hitRect=(\(hr.minX, privacy: .public),\(hr.minY, privacy: .public),\(hr.width, privacy: .public),\(hr.height, privacy: .public)) zone=\(self.scene.companion.perchZone.rawValue, privacy: .public) panel=(\(self.panel.frame.minX, privacy: .public),\(self.panel.frame.minY, privacy: .public),\(self.panel.frame.width, privacy: .public),\(self.panel.frame.height, privacy: .public))")
+                    if over {
+                        self.pendingHardwareRightClickOnDog = true
+                        self.hardwareRightClickStartTime = ProcessInfo.processInfo.systemUptime
+                    }
+                } else if isRightUp && self.pendingHardwareRightClickOnDog {
+                    let scenePt = self.scenePointForGlobalMouse(NSEvent.mouseLocation)
+                    if self.scene.isPointOverDogForContextMenu(scenePt) {
+                        self.presentCompanionContextMenu(with: nil, source: "globalMonitor.rightUp")
+                    }
+                    self.pendingHardwareRightClickOnDog = false
+                }
             }
         }
 
+        // Note: Do NOT intercept `.rightMouseDown` here — let `InteractiveSKView.rightMouseDown` handle it cleanly
+        // (calling NSMenu.popUp synchronously inside a local event monitor is dropped by AppKit!).
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown, .leftMouseUp]
         ) { [weak self] event in
@@ -252,6 +350,9 @@ public final class OverlayWindowController {
     }
 
     private func syncPointerState() {
+        if isContextMenuOpen {
+            return
+        }
         if scene.mode == .tennis {
             if panel.ignoresMouseEvents {
                 panel.ignoresMouseEvents = false
@@ -259,10 +360,12 @@ public final class OverlayWindowController {
             return
         }
 
-        let scenePt = scenePointForGlobalMouse(NSEvent.mouseLocation)
+        let globalMouse = NSEvent.mouseLocation
+        let scenePt = scenePointForGlobalMouse(globalMouse)
         let shouldCapture = scene.updatePointerCaptureAndHover(atScenePoint: scenePt)
         if panel.ignoresMouseEvents == shouldCapture {
             panel.ignoresMouseEvents = !shouldCapture
+            inputLogger.notice("ignoresMouseEvents -> \(!shouldCapture, privacy: .public) scenePt=\(scenePt.x, privacy: .public),\(scenePt.y, privacy: .public)")
             if !shouldCapture {
                 // Reset cursor once upon leaving Westie so underlying apps control their own cursors cleanly
                 skView.desiredCursor = .arrow
@@ -277,5 +380,27 @@ public final class OverlayWindowController {
                 nextCursor.set()
             }
         }
+
+        // Zero-permission 60Hz hardware right-button detector:
+        // If AppKit fails to route `.rightMouseDown` to our `.nonactivatingPanel` for any reason,
+        // catch the press while hovering Westie and pop the menu cleanly on button release!
+        let isRightDown = ((NSEvent.pressedMouseButtons & (1 << 1)) != 0)
+            || CGEventSource.buttonState(.combinedSessionState, button: .right)
+        if isRightDown && !wasHardwareRightButtonDown {
+            if shouldCapture || scene.isPointOverDogForContextMenu(scenePt) {
+                pendingHardwareRightClickOnDog = true
+                hardwareRightClickStartTime = ProcessInfo.processInfo.systemUptime
+                inputLogger.notice("hwRightButton DOWN overDog=true scenePt=\(scenePt.x, privacy: .public),\(scenePt.y, privacy: .public)")
+            }
+        } else if !isRightDown && wasHardwareRightButtonDown {
+            if pendingHardwareRightClickOnDog {
+                let held = ProcessInfo.processInfo.systemUptime - hardwareRightClickStartTime
+                pendingHardwareRightClickOnDog = false
+                if held <= 0.8 && (shouldCapture || scene.isPointOverDogForContextMenu(scenePt)) {
+                    presentCompanionContextMenu(with: nil, source: "hwRightButton.release")
+                }
+            }
+        }
+        wasHardwareRightButtonDown = isRightDown
     }
 }

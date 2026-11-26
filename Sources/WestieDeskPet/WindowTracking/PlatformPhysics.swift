@@ -349,9 +349,6 @@ public enum PlatformPhysics {
             win.frame.height >= 120
         }
 
-        // Native macOS Full-Screen Space hides the menu bar so visibleScreenFrame approaches screenSize
-        let isNativeFullScreenSpace = visibleScreenFrame.height >= screenSize.height - 4
-
         guard let activeWin = standardWindows.first(where: { $0.isFrontmostApp }) ?? standardWindows.first else {
             return ActiveWindowPerchLayout(
                 activeWindowID: nil,
@@ -365,12 +362,15 @@ public enum PlatformPhysics {
 
         let f = activeWin.frame
         let topHeadroom = visibleScreenFrame.maxY - f.maxY
+        let physicalTopClearance = screenSize.height - f.maxY
         let rightHeadroom = screenSize.width - f.maxX
 
+        // True fullscreen or maximized window covering the screen (works accurately on external monitors without menu bars!)
         let coversScreen = (f.width >= screenSize.width - 24 && f.height >= visibleScreenFrame.height - 24)
-        let hasNeitherTopNorRightRoom = (topHeadroom < 26 && rightHeadroom < 36)
+        let hasTopRoom = (topHeadroom >= 20) || (topHeadroom >= 4 && physicalTopClearance >= 40)
+        let hasRightRoom = (rightHeadroom >= 36 && f.maxX >= 120)
 
-        if isNativeFullScreenSpace || coversScreen || hasNeitherTopNorRightRoom {
+        if coversScreen || (!hasTopRoom && !hasRightRoom) {
             return ActiveWindowPerchLayout(
                 activeWindowID: activeWin.windowID,
                 activeWindowFrame: f,
@@ -383,7 +383,7 @@ public enum PlatformPhysics {
 
         // 1. Top-edge perch (`正上方` — avoid leftmost 78pt where macOS red/yellow/green window buttons live!)
         var topPlatform: WindowPlatform? = nil
-        if topHeadroom >= 26 {
+        if hasTopRoom {
             let safeMinX = max(f.minX + 78, visibleScreenFrame.minX + 20)
             let safeMaxX = min(f.maxX - 20, screenSize.width - 24)
             if safeMaxX - safeMinX >= 70 {
@@ -400,13 +400,13 @@ public enum PlatformPhysics {
             }
         }
 
-        // 2. Window right-edge peek (`右侧` — upper-right vertical border of active window, just like user's screenshot!)
+        // 2. Window right-edge peek (`右侧` — full vertical border span so same-Y shortest-path switches stay level!)
         var rightPeek: RightEdgeAnchor? = nil
-        if rightHeadroom >= 36 && f.maxX >= 120 {
-            let maxY = min(f.maxY - 42, visibleScreenFrame.maxY - 44)
-            let minY = max(f.minY + 56, min(maxY - 8, f.maxY - 220))
+        if hasRightRoom {
+            let maxY = min(f.maxY - 46, visibleScreenFrame.maxY - 46)
+            let minY = max(f.minY + 52, visibleScreenFrame.minY + 52)
             if maxY >= minY {
-                let defaultY = max(minY, min(maxY, f.maxY - 68))
+                let defaultY = max(minY, min(maxY, f.maxY - 88))
                 rightPeek = RightEdgeAnchor(
                     edgeX: f.maxX,
                     minY: minY,
@@ -426,5 +426,32 @@ public enum PlatformPhysics {
             windowRightPeek: rightPeek,
             screenRightPeek: screenRight
         )
+    }
+
+    /// Computes whether a sprite rectangle anchored to `ownerWindowID` is covered by any window stacked in front of it.
+    public static func isRectOccludedByFrontWindows(
+        _ rect: CGRect,
+        ownerWindowID: UInt32,
+        windowsFrontToBack: [RawWindowInfo],
+        excludedPID: Int32
+    ) -> Bool {
+        for win in windowsFrontToBack {
+            guard win.ownerPID != excludedPID,
+                  win.layer == 0,
+                  win.alpha >= 0.2,
+                  win.frame.width >= 120,
+                  win.frame.height >= 70
+            else {
+                continue
+            }
+            if win.windowID == ownerWindowID {
+                return false
+            }
+            let intersection = win.frame.intersection(rect)
+            if !intersection.isNull && intersection.width >= 10 && intersection.height >= 10 {
+                return true
+            }
+        }
+        return false
     }
 }

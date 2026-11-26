@@ -5,11 +5,24 @@ public final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private weak var scene: DesktopScene?
 
+    private var headerItem: NSMenuItem!
     private var toggleTennisItem: NSMenuItem!
+    private var inviteItem: NSMenuItem!
+    private var treatItem: NSMenuItem!
     private var sleepModeItem: NSMenuItem!
     private var difficultyCasualItem: NSMenuItem!
     private var difficultyProItem: NSMenuItem!
     private var speedMenuItems: [TennisGameSpeed: NSMenuItem] = [:]
+    private var petSpeciesParentItem: NSMenuItem!
+    private var petSpeciesItems: [(species: PetSpecies, item: NSMenuItem)] = []
+    private var climbRoutineParentItem: NSMenuItem!
+    private var climbRoutineItems: [(routine: TopClimbRoutine, item: NSMenuItem)] = []
+    private var switchDelayParentItem: NSMenuItem!
+    private var switchDelayItems: [(seconds: TimeInterval, item: NSMenuItem)] = []
+    private var climbIntervalParentItem: NSMenuItem!
+    private var climbIntervalItems: [(enabled: Bool, seconds: TimeInterval, item: NSMenuItem)] = []
+    private var dogScaleParentItem: NSMenuItem!
+    private var dogScaleItems: [(scale: Double, item: NSMenuItem)] = []
 
     public init(scene: DesktopScene) {
         self.scene = scene
@@ -26,11 +39,17 @@ public final class MenuBarController: NSObject {
         scene.tennis.onGameSpeedChanged = { [weak self] spd in
             self?.syncSpeedCheckmarks(selected: spd)
         }
+        let prevPrefCallback = scene.companion.preferences.onChanged
+        scene.companion.preferences.onChanged = { [weak self] in
+            prevPrefCallback?()
+            self?.syncPreferenceCheckmarks()
+        }
     }
 
     private func configureStatusButton() {
         guard let button = statusItem.button else { return }
-        if let icon = SpriteBank.shared.nsImage(for: .badgeIcon) {
+        let species = scene?.companion.preferences.petSpecies ?? .westie
+        if let icon = SpriteBank.shared.nsImage(for: .badgeIcon, species: species) {
             let resized = NSImage(size: NSSize(width: 18, height: 18))
             resized.lockFocus()
             NSGraphicsContext.current?.imageInterpolation = .none
@@ -40,17 +59,19 @@ public final class MenuBarController: NSObject {
             button.imagePosition = .imageLeading
             button.title = ""
         } else {
-            button.title = "🐶🎾"
+            button.title = (species == .goldenCat) ? "🐱🎾" : "🐶🎾"
         }
-        button.toolTip = "Westie Desk Pet — 西高地桌面陪伴 & 网球"
+        button.toolTip = (species == .goldenCat)
+            ? "Westie Desk Pet — 金渐层小猫桌面陪伴 & 网球"
+            : "Westie Desk Pet — 西高地桌面陪伴 & 网球"
     }
 
     private func rebuildMenu() {
         let menu = NSMenu(title: "Westie Desk Pet")
 
-        let header = NSMenuItem(title: "🐶 西高地桌面伙伴 (Westie)", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
+        headerItem = NSMenuItem(title: "🐶 西高地桌面伙伴", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
         menu.addItem(.separator())
 
         toggleTennisItem = NSMenuItem(
@@ -62,7 +83,7 @@ public final class MenuBarController: NSObject {
         toggleTennisItem.target = self
         menu.addItem(toggleTennisItem)
 
-        let inviteItem = NSMenuItem(
+        inviteItem = NSMenuItem(
             title: "🟢 让西高地叼网球过来",
             action: #selector(triggerInvite),
             keyEquivalent: ""
@@ -82,7 +103,7 @@ public final class MenuBarController: NSObject {
         menu.addItem(summonItem)
 
         let rightPeekItem = NSMenuItem(
-            title: "👀 移到右侧探头模式",
+            title: "👀 移到屏幕右侧边",
             action: #selector(moveRightPeek),
             keyEquivalent: "e"
         )
@@ -90,7 +111,51 @@ public final class MenuBarController: NSObject {
         rightPeekItem.target = self
         menu.addItem(rightPeekItem)
 
-        let treatItem = NSMenuItem(
+        let previewClimbItem = NSMenuItem(
+            title: "🐾 立即预览爬顶",
+            action: #selector(previewClimb),
+            keyEquivalent: ""
+        )
+        previewClimbItem.target = self
+        menu.addItem(previewClimbItem)
+
+        let previewFlashItem = NSMenuItem(
+            title: "⚡ 立即预览闪身步",
+            action: #selector(previewFlashStep),
+            keyEquivalent: ""
+        )
+        previewFlashItem.target = self
+        menu.addItem(previewFlashItem)
+
+        menu.addItem(.separator())
+
+        let speciesSubmenu = NSMenu(title: "切换宠物")
+        petSpeciesItems.removeAll()
+        for sp in PetSpecies.allCases {
+            let item = NSMenuItem(title: sp.displayName, action: #selector(selectPetSpecies(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = sp.rawValue
+            speciesSubmenu.addItem(item)
+            petSpeciesItems.append((sp, item))
+        }
+        petSpeciesParentItem = NSMenuItem(title: "🎭 切换宠物", action: nil, keyEquivalent: "")
+        petSpeciesParentItem.submenu = speciesSubmenu
+        menu.addItem(petSpeciesParentItem)
+
+        let routineSubmenu = NSMenu(title: "爬顶动态特效")
+        climbRoutineItems.removeAll()
+        for rt in TopClimbRoutine.allCases {
+            let item = NSMenuItem(title: rt.displayName, action: #selector(selectClimbRoutine(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = rt.rawValue
+            routineSubmenu.addItem(item)
+            climbRoutineItems.append((rt, item))
+        }
+        climbRoutineParentItem = NSMenuItem(title: "🎬 爬顶动态特效", action: nil, keyEquivalent: "")
+        climbRoutineParentItem.submenu = routineSubmenu
+        menu.addItem(climbRoutineParentItem)
+
+        treatItem = NSMenuItem(
             title: "🦴 投喂一根骨头饼干",
             action: #selector(feedTreat),
             keyEquivalent: "b"
@@ -106,6 +171,56 @@ public final class MenuBarController: NSObject {
         )
         sleepModeItem.target = self
         menu.addItem(sleepModeItem)
+
+        menu.addItem(.separator())
+
+        // v0.4 Stealth Switch Delay & Right-to-Top Climb quick presets + Preferences Window
+        let delaySubmenu = NSMenu(title: "换窗等待时长")
+        switchDelayItems.removeAll()
+        for preset in CompanionPreferences.switchDelayPresets {
+            let item = NSMenuItem(title: preset.title, action: #selector(selectSwitchDelay(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.seconds
+            delaySubmenu.addItem(item)
+            switchDelayItems.append((preset.seconds, item))
+        }
+        switchDelayParentItem = NSMenuItem(title: "🕵️ 换窗等待时长", action: nil, keyEquivalent: "")
+        switchDelayParentItem.submenu = delaySubmenu
+        menu.addItem(switchDelayParentItem)
+
+        let climbSubmenu = NSMenu(title: "爬顶互动间隔")
+        climbIntervalItems.removeAll()
+        for preset in CompanionPreferences.climbIntervalPresets {
+            let item = NSMenuItem(title: preset.title, action: #selector(selectClimbInterval(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: preset.enabled ? preset.seconds : -1.0)
+            climbSubmenu.addItem(item)
+            climbIntervalItems.append((preset.enabled, preset.seconds, item))
+        }
+        climbIntervalParentItem = NSMenuItem(title: "🐾 爬顶互动间隔", action: nil, keyEquivalent: "")
+        climbIntervalParentItem.submenu = climbSubmenu
+        menu.addItem(climbIntervalParentItem)
+
+        let scaleSubmenu = NSMenu(title: "小狗大小")
+        dogScaleItems.removeAll()
+        for preset in CompanionPreferences.dogScalePresets {
+            let item = NSMenuItem(title: preset.title, action: #selector(selectDogScale(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: preset.scale)
+            scaleSubmenu.addItem(item)
+            dogScaleItems.append((preset.scale, item))
+        }
+        dogScaleParentItem = NSMenuItem(title: "📏 小狗大小", action: nil, keyEquivalent: "")
+        dogScaleParentItem.submenu = scaleSubmenu
+        menu.addItem(dogScaleParentItem)
+
+        let prefsItem = NSMenuItem(
+            title: "⚙️ 陪伴偏好设置…",
+            action: #selector(openPreferences),
+            keyEquivalent: ","
+        )
+        prefsItem.target = self
+        menu.addItem(prefsItem)
 
         menu.addItem(.separator())
 
@@ -139,6 +254,8 @@ public final class MenuBarController: NSObject {
         diffParent.submenu = diffSubmenu
         menu.addItem(diffParent)
 
+        syncPreferenceCheckmarks()
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "退出 Westie Desk Pet", action: #selector(quitApp), keyEquivalent: "q")
@@ -167,12 +284,39 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func moveWindowTop() {
-        scene?.companion.perchPreference = .auto
         scene?.moveDogToZone(.windowTop)
     }
 
     @objc private func moveRightPeek() {
-        scene?.moveDogToZone(.windowRightPeek)
+        if scene?.companion.perchPreference == .rightPeek {
+            scene?.moveDogToZone(.windowRightPeek)
+        } else {
+            scene?.moveDogToZone(.screenRightPeek)
+        }
+    }
+
+    @objc private func previewClimb() {
+        scene?.previewClimbToTopGreeting()
+    }
+
+    @objc private func previewFlashStep() {
+        scene?.previewClimbToTopGreeting(routineOverride: .flashStep)
+    }
+
+    @objc private func selectPetSpecies(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let sp = PetSpecies(rawValue: raw)
+        else { return }
+        scene?.companion.preferences.petSpecies = sp
+        syncPreferenceCheckmarks()
+    }
+
+    @objc private func selectClimbRoutine(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let rt = TopClimbRoutine(rawValue: raw)
+        else { return }
+        scene?.companion.preferences.topClimbRoutine = rt
+        syncPreferenceCheckmarks()
     }
 
     @objc private func selectSpeed(_ sender: NSMenuItem) {
@@ -213,5 +357,88 @@ public final class MenuBarController: NSObject {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func selectSwitchDelay(_ sender: NSMenuItem) {
+        guard let secs = sender.representedObject as? TimeInterval else { return }
+        scene?.companion.preferences.windowSwitchDelaySeconds = secs
+        syncPreferenceCheckmarks()
+    }
+
+    @objc private func selectClimbInterval(_ sender: NSMenuItem) {
+        guard let num = sender.representedObject as? NSNumber else { return }
+        let val = num.doubleValue
+        if val < 0 {
+            scene?.companion.preferences.climbToTopEnabled = false
+        } else {
+            scene?.companion.preferences.climbToTopEnabled = true
+            scene?.companion.preferences.climbToTopIntervalSeconds = val
+        }
+        syncPreferenceCheckmarks()
+    }
+
+    @objc private func selectDogScale(_ sender: NSMenuItem) {
+        guard let num = sender.representedObject as? NSNumber else { return }
+        scene?.companion.preferences.dogScale = num.doubleValue
+        syncPreferenceCheckmarks()
+    }
+
+    @objc private func openPreferences() {
+        guard let scene else { return }
+        PreferencesWindowController.shared.show(
+            preferences: scene.companion.preferences,
+            onPreviewClimb: { [weak scene] in
+                scene?.previewClimbToTopGreeting()
+            },
+            onPreviewFlashStep: { [weak scene] in
+                scene?.previewClimbToTopGreeting(routineOverride: .flashStep)
+            }
+        )
+    }
+
+    private func syncPreferenceCheckmarks() {
+        guard let prefs = scene?.companion.preferences else { return }
+
+        configureStatusButton()
+        let sp = prefs.petSpecies
+        headerItem.title = (sp == .goldenCat) ? "🐱 金渐层桌面伙伴" : "🐶 西高地桌面伙伴"
+        inviteItem?.title = "🟢 让\(sp.shortName)叼网球过来"
+        treatItem?.title = (sp == .goldenCat) ? "🐟 投喂一条小鱼干" : "🦴 投喂一根骨头饼干"
+        difficultyCasualItem?.title = "\(TennisDifficulty.casual.displayName(for: sp)) (Casual)"
+        difficultyProItem?.title = "\(TennisDifficulty.pro.displayName(for: sp)) (Pro)"
+        scene?.tennis.refreshPetSpeciesUI()
+        petSpeciesParentItem.title = "🎭 切换宠物: \(sp.shortName)"
+        for entry in petSpeciesItems {
+            entry.item.state = (entry.species == sp) ? .on : .off
+        }
+
+        let rt = prefs.topClimbRoutine
+        climbRoutineParentItem.title = "🎬 爬顶特效: \(rt.shortLabel)"
+        for entry in climbRoutineItems {
+            entry.item.state = (entry.routine == rt) ? .on : .off
+        }
+
+        let curDelay = prefs.windowSwitchDelaySeconds
+        switchDelayParentItem.title = "🕵️ 换窗等待: \(CompanionPreferences.formatDuration(curDelay))"
+        for entry in switchDelayItems {
+            entry.item.state = abs(curDelay - entry.seconds) < 0.1 ? .on : .off
+        }
+
+        let climbLabel = prefs.climbToTopEnabled
+            ? CompanionPreferences.formatDuration(prefs.climbToTopIntervalSeconds)
+            : "已关闭"
+        climbIntervalParentItem.title = "🐾 爬顶互动: \(climbLabel)"
+        for entry in climbIntervalItems {
+            let selected = entry.enabled
+                ? (prefs.climbToTopEnabled && abs(prefs.climbToTopIntervalSeconds - entry.seconds) < 0.5)
+                : !prefs.climbToTopEnabled
+            entry.item.state = selected ? .on : .off
+        }
+
+        let curScale = prefs.dogScale
+        dogScaleParentItem.title = "📏 宠物大小: \(CompanionPreferences.formatScale(curScale))"
+        for entry in dogScaleItems {
+            entry.item.state = abs(curScale - entry.scale) < 0.03 ? .on : .off
+        }
     }
 }

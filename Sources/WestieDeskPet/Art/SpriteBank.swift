@@ -6,6 +6,8 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
     case westieIdle = "westie_idle"
     case westieWalk1 = "westie_walk_1"
     case westieWalk2 = "westie_walk_2"
+    case westieWalk3 = "westie_walk_3"
+    case westieWalk4 = "westie_walk_4"
     case westieSitTilt = "westie_sit_tilt"
     case westieSleep = "westie_sleep"
     case westieDangling = "westie_dangling"
@@ -13,6 +15,33 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
     case westiePeekHover = "westie_peek_hover"
     case westieLoafCalm = "westie_loaf_calm"
     case westieChinLedge = "westie_chin_ledge"
+
+    // Westie v0.4.2 Climb, Look-Around, Yawn & Drowsy Transition Frames
+    case westieTopPeekCenter = "westie_top_peek_center"
+    case westieTopPeekLeft = "westie_top_peek_left"
+    case westieTopPeekRight = "westie_top_peek_right"
+    case westieClimbUp = "westie_climb_up"
+    case westieYawn = "westie_yawn"
+    case westieDrowsy = "westie_drowsy"
+
+    // Westie v0.4.3 Bouncy Hop Cycle & Stationary-Body Head-Turn Frames
+    case westieHopCrouch = "westie_hop_crouch"
+    case westieHopAir = "westie_hop_air"
+    case westieHopLand = "westie_hop_land"
+    case westieLookLeftHeadLeft = "westie_look_left_head_left"
+    case westieLookLeftHeadCenter = "westie_look_left_head_center"
+    case westieLookLeftHeadRight = "westie_look_left_head_right"
+
+    // v0.5 Bipedal Flash-Step Dance ("闪身步": 起势 / 往右闪 / 停 / 准备 / 再往左闪)
+    case westieFlashStep1 = "westie_flash_step_1"
+    case westieFlashStep2 = "westie_flash_step_2"
+    case westieFlashStep3 = "westie_flash_step_3"
+    case westieFlashStep4 = "westie_flash_step_4"
+    case westieFlashStep5 = "westie_flash_step_5"
+
+    // v0.5.1 Snack Chewing Animation (Westie chewing bone / Golden Cat chewing dried fish)
+    case westieEat1 = "westie_eat_1"
+    case westieEat2 = "westie_eat_2"
 
     // Westie Tennis & Special
     case westieHoldingBall = "westie_holding_ball"
@@ -29,28 +58,59 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
     case tennisBall = "tennis_ball"
     case boneTreat = "bone_treat"
     case badgeIcon = "badge_icon"
+    public func resourceName(for species: PetSpecies) -> String {
+        switch species {
+        case .westie:
+            return rawValue
+        case .goldenCat:
+            if rawValue.hasPrefix("westie_") {
+                return "cat_" + rawValue.dropFirst("westie_".count)
+            }
+            if self == .badgeIcon {
+                return "cat_badge_icon"
+            }
+            if self == .boneTreat {
+                return "dried_fish_treat"
+            }
+            return rawValue
+        }
+    }
+
+    public var isPetSpecific: Bool {
+        rawValue.hasPrefix("westie_") || self == .badgeIcon || self == .boneTreat
+    }
 }
 
 @MainActor
 public final class SpriteBank {
     public static let shared = SpriteBank()
 
-    private var cache: [SpriteAssetKey: SKTexture] = [:]
+    private var cache: [String: SKTexture] = [:]
 
     private init() {}
 
-    public func texture(for key: SpriteAssetKey) -> SKTexture {
-        if let existing = cache[key] {
+    public func texture(for key: SpriteAssetKey, species: PetSpecies = .westie) -> SKTexture {
+        let name = key.resourceName(for: species)
+        if let existing = cache[name] {
             return existing
         }
-        let loaded = loadFromBundle(key: key) ?? makeProceduralFallback(for: key)
+        let loaded = loadFromBundle(resourceName: name)
+            ?? (species != .westie ? loadFromBundle(resourceName: key.rawValue) : nil)
+            ?? makeProceduralFallback(for: key, species: species)
         loaded.filteringMode = .nearest
-        cache[key] = loaded
+        cache[name] = loaded
         return loaded
     }
 
-    public func nsImage(for key: SpriteAssetKey) -> NSImage? {
-        if let url = locateSpriteURL(named: key.rawValue),
+    public func nsImage(for key: SpriteAssetKey, species: PetSpecies = .westie) -> NSImage? {
+        let name = key.resourceName(for: species)
+        if let url = locateSpriteURL(named: name),
+           let image = NSImage(contentsOf: url)
+        {
+            return image
+        }
+        if species != .westie,
+           let url = locateSpriteURL(named: key.rawValue),
            let image = NSImage(contentsOf: url)
         {
             return image
@@ -58,8 +118,8 @@ public final class SpriteBank {
         return nil
     }
 
-    public func hasRealSprite(for key: SpriteAssetKey) -> Bool {
-        locateSpriteURL(named: key.rawValue) != nil
+    public func hasRealSprite(for key: SpriteAssetKey, species: PetSpecies = .westie) -> Bool {
+        locateSpriteURL(named: key.resourceName(for: species)) != nil
     }
 
     private func locateSpriteURL(named name: String) -> URL? {
@@ -84,8 +144,8 @@ public final class SpriteBank {
         return nil
     }
 
-    private func loadFromBundle(key: SpriteAssetKey) -> SKTexture? {
-        guard let url = locateSpriteURL(named: key.rawValue),
+    private func loadFromBundle(resourceName: String) -> SKTexture? {
+        guard let url = locateSpriteURL(named: resourceName),
               let image = NSImage(contentsOf: url)
         else {
             return nil
@@ -94,7 +154,7 @@ public final class SpriteBank {
     }
 
     /// Crisp pixel-art fallback so tests and headless environments never fail if PNGs aren't unpacked yet.
-    private func makeProceduralFallback(for key: SpriteAssetKey) -> SKTexture {
+    private func makeProceduralFallback(for key: SpriteAssetKey, species: PetSpecies) -> SKTexture {
         let size = NSSize(width: 32, height: 32)
         let img = NSImage(size: size)
         img.lockFocus()

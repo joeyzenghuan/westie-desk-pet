@@ -96,6 +96,17 @@ public final class TennisMatchController {
     private static let keyDown: UInt16 = 125
     private static let keyRight: UInt16 = 124
 
+    private var currentPetSpecies: PetSpecies {
+        CompanionPreferences.shared.petSpecies
+    }
+
+    private var currentPetLabel: String {
+        switch currentPetSpecies {
+        case .westie: return "🐶 西高地"
+        case .goldenCat: return "🐱 金渐层"
+        }
+    }
+
     public init() {
         rootNode.zPosition = 20
         rootNode.isHidden = true
@@ -205,6 +216,7 @@ public final class TennisMatchController {
         heldKeys.removeAll()
         isChargingLeftClick = false
         currentChargeRatio = 0
+        updateDifficultyButtonLabel()
         resetForNextPoint(announcement: "🎾 抢 5 分对决开始！点击左键或按空格发球")
         rootNode.isHidden = false
         rootNode.alpha = 0
@@ -593,7 +605,8 @@ public final class TennisMatchController {
             chargeRatio: (difficulty == .pro) ? 0.55 : 0.20
         )
         rallyHits = 1
-        spawnCourtPopText("汪! 🎾", at: CGPoint(x: opponent.x, y: opponent.y + 42), color: .white)
+        let serveCry = (currentPetSpecies == .goldenCat) ? "喵! 🎾" : "汪! 🎾"
+        spawnCourtPopText(serveCry, at: CGPoint(x: opponent.x, y: opponent.y + 42), color: .white)
         updateScoreboardText()
     }
 
@@ -636,15 +649,19 @@ public final class TennisMatchController {
             if playerScore > westieScore {
                 bannerLabel.text = "🏆 你赢啦 (\(playerScore) : \(westieScore))！左键/R 再来一局 · ESC 回桌面"
             } else {
-                bannerLabel.text = "🐶 西高地获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
+                let winText = (currentPetSpecies == .goldenCat)
+                    ? "🐱 金渐层获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
+                    : "🐶 西高地获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
+                bannerLabel.text = winText
             }
             bannerLabel.alpha = 1.0
             return
         }
 
         server = server.opposite
-        let scorerName = (winner == .player) ? "你得分" : "西高地得分"
-        let nextServeHint = (server == .player) ? "轮到你发球(左键/空格)" : "西高地准备发球..."
+        let petShort = currentPetSpecies.shortName
+        let scorerName = (winner == .player) ? "你得分" : "\(petShort)得分"
+        let nextServeHint = (server == .player) ? "轮到你发球(左键/空格)" : "\(petShort)准备发球..."
         resetForNextPoint(announcement: "\(reason) → \(scorerName)! \(nextServeHint)")
         if server == .westie {
             pointPauseTimer = 1.15
@@ -668,21 +685,22 @@ public final class TennisMatchController {
         playerShadow.position = CGPoint(x: playerPos.x, y: playerPos.y + 3)
         chargeRing.position = CGPoint(x: playerPos.x, y: playerPos.y + 6)
 
-        // Westie opponent sprite
+        // Pet opponent sprite (Westie OR Golden Shaded Cat!)
+        let sp = currentPetSpecies
         if opponent.celebrateTimer > 0 || (isMatchOver && westieScore > playerScore) {
-            westieSprite.texture = bank.texture(for: .westieVictory)
+            westieSprite.texture = bank.texture(for: .westieVictory, species: sp)
             westieSprite.xScale = abs(westieSprite.xScale)
         } else if opponent.diveTimer > 0 {
-            westieSprite.texture = bank.texture(for: .westieTennisDive)
+            westieSprite.texture = bank.texture(for: .westieTennisDive, species: sp)
             westieSprite.xScale = (opponent.facingDirection < 0) ? -abs(westieSprite.xScale) : abs(westieSprite.xScale)
         } else if opponent.swingCooldown > 0.20 {
-            westieSprite.texture = bank.texture(for: .westieTennisSwing)
+            westieSprite.texture = bank.texture(for: .westieTennisSwing, species: sp)
             westieSprite.xScale = abs(westieSprite.xScale)
         } else if !isAwaitingServe && ball.lastHitter == .player && abs(opponent.lastStepDX) > 0.4 {
-            westieSprite.texture = bank.texture(for: .westieTennisRun)
+            westieSprite.texture = bank.texture(for: .westieTennisRun, species: sp)
             westieSprite.xScale = (opponent.facingDirection < 0) ? -abs(westieSprite.xScale) : abs(westieSprite.xScale)
         } else {
-            westieSprite.texture = bank.texture(for: .westieTennisReady)
+            westieSprite.texture = bank.texture(for: .westieTennisReady, species: sp)
             westieSprite.xScale = abs(westieSprite.xScale)
         }
         westieSprite.position = CGPoint(x: opponent.x, y: opponent.y)
@@ -698,13 +716,19 @@ public final class TennisMatchController {
         ballSprite.setScale(ballScale)
     }
 
+    public func refreshPetSpeciesUI() {
+        updateDifficultyButtonLabel()
+        updateScoreboardText()
+    }
+
     private func updateScoreboardText() {
-        scoreLabel.text = "🧑 你  \(playerScore)  :  \(westieScore)  西高地 🐶   |   回合 \(rallyHits)"
+        let petText = (currentPetSpecies == .goldenCat) ? "金渐层 🐱" : "西高地 🐶"
+        scoreLabel.text = "🧑 你  \(playerScore)  :  \(westieScore)  \(petText)   |   回合 \(rallyHits)"
     }
 
     private func updateDifficultyButtonLabel() {
         if let lbl = difficultyButtonNode.childNode(withName: "pillLabel") as? SKLabelNode {
-            lbl.text = "🐾 难度: \(difficulty.rawValue)"
+            lbl.text = "🐾 难度: \(difficulty.displayName(for: currentPetSpecies))"
         }
     }
 
