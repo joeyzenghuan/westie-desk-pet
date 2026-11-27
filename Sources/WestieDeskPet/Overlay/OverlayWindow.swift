@@ -89,11 +89,23 @@ public final class InteractiveSKView: SKView {
 public final class OverlayPanel: NSPanel {
     public var allowKeyFocus: Bool = false
     public var onRightMouseDownEvent: ((NSEvent) -> Bool)?
+    public var onRemappedSecondaryClickEvent: ((NSEvent) -> Bool)?
 
     public override var canBecomeKey: Bool { allowKeyFocus }
     public override var canBecomeMain: Bool { false }
 
     public override func sendEvent(_ event: NSEvent) {
+        // Some global event taps re-post a right-button press as an instant `leftMouseDown`/`leftMouseUp` pair
+        // that still carries `buttonNumber == 1` — it's a secondary click, never a tap on Westie!
+        let isRemappedSecondaryClick = (event.type == .leftMouseDown || event.type == .leftMouseUp)
+            && event.buttonNumber == 1
+        if isRemappedSecondaryClick {
+            inputLogger.notice("OverlayPanel.sendEvent remappedSecondaryClick type=\(event.type.rawValue, privacy: .public) loc=\(event.locationInWindow.x, privacy: .public),\(event.locationInWindow.y, privacy: .public)")
+            if onRemappedSecondaryClickEvent?(event) == true {
+                return
+            }
+        }
+
         let isContextTrigger = (event.type == .rightMouseDown)
             || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
         if isContextTrigger {
@@ -119,6 +131,9 @@ public final class OverlayWindowController {
     private var wasHardwareRightButtonDown: Bool = false
     private var pendingHardwareRightClickOnDog: Bool = false
     private var hardwareRightClickStartTime: TimeInterval = 0
+    private var pendingRemappedSecondaryClick: Bool = false
+    private var lastDisplayLinkReviveTime: TimeInterval = 0
+    private var consecutiveRenderStalls: Int = 0
 
     public init(screen: NSScreen) {
         let frame = screen.frame
@@ -154,6 +169,24 @@ public final class OverlayWindowController {
         panel.onRightMouseDownEvent = { [weak self] event in
             guard let self, self.scene.mode == .companion else { return false }
             self.presentCompanionContextMenu(with: event, source: "panel.sendEvent")
+            return true
+        }
+
+        panel.onRemappedSecondaryClickEvent = { [weak self] event in
+            guard let self, self.scene.mode == .companion else { return false }
+            if event.type == .leftMouseDown {
+                self.pendingRemappedSecondaryClick = true
+            } else if self.pendingRemappedSecondaryClick {
+                // Pop on release a beat later: if the tap also forwards the genuine `.rightMouseDown`,
+                // that one opens the menu through `panel.sendEvent` first and clears this pending flag.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.pendingRemappedSecondaryClick else { return }
+                        self.pendingRemappedSecondaryClick = false
+                        self.presentCompanionContextMenu(with: nil, source: "panel.remappedSecondaryClick")
+                    }
+                }
+            }
             return true
         }
 
@@ -199,6 +232,17 @@ public final class OverlayWindowController {
                 self?.handleActiveWorkspaceChanged()
             }
         }
+
+        wsCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.realignToCurrentScreen()
+                self?.handleActiveWorkspaceChanged()
+            }
+        }
     }
 
     deinit {
@@ -226,11 +270,29 @@ public final class OverlayWindowController {
         if skView.preferredFramesPerSecond != targetFPS {
             skView.preferredFramesPerSecond = targetFPS
         }
-        if panel.frame != screen.frame {
+        let frameChanged = (panel.frame != screen.frame)
+        if frameChanged {
             panel.setFrame(screen.frame, display: true)
             skView.frame = NSRect(origin: .zero, size: screen.frame.size)
             scene.size = screen.frame.size
         }
+        panel.orderFrontRegardless()
+        if frameChanged {
+            // Moving an SKView across multi-monitor displays on macOS 15/26 can leave its internal
+            // DisplayLink bound to the old display or silently stopped; bounce `isPaused` to rebind cleanly!
+            reviveSpriteKitRenderLoop(reason: "realignToCurrentScreen")
+        }
+    }
+
+    private func reviveSpriteKitRenderLoop(reason: String) {
+        inputLogger.notice("reviveSpriteKitRenderLoop reason=\(reason, privacy: .public) stalls=\(self.consecutiveRenderStalls, privacy: .public)")
+        skView.isPaused = true
+        skView.isPaused = false
+        scene.isPaused = false
+        if skView.scene !== scene {
+            skView.presentScene(scene)
+        }
+        skView.needsDisplay = true
         panel.orderFrontRegardless()
     }
 
@@ -253,6 +315,7 @@ public final class OverlayWindowController {
         lastContextMenuPopTime = now
         isContextMenuOpen = true
         pendingHardwareRightClickOnDog = false
+        pendingRemappedSecondaryClick = false
 
         let screenMouse = NSEvent.mouseLocation
         inputLogger.notice("presentCompanionContextMenu OPEN source=\(source, privacy: .public) mouse=\(screenMouse.x, privacy: .public),\(screenMouse.y, privacy: .public) panelFrame=\(self.panel.frame.origin.x, privacy: .public),\(self.panel.frame.origin.y, privacy: .public),\(self.panel.frame.width, privacy: .public),\(self.panel.frame.height, privacy: .public)")
@@ -353,6 +416,33 @@ public final class OverlayWindowController {
         if isContextMenuOpen {
             return
         }
+
+        // Render-loop heartbeat watchdog: if SpriteKit's DisplayLink stalls (e.g., after monitor switch,
+        // Space change, or sleep/wake on macOS 26), revive `SKView` AND advance simulation at 60Hz so pet NEVER freezes!
+        let now = ProcessInfo.processInfo.systemUptime
+        let sinceLastFrame = now - scene.lastDisplayLinkUptime
+        if sinceLastFrame > 0.45 {
+            if now - lastDisplayLinkReviveTime > 0.8 {
+                lastDisplayLinkReviveTime = now
+                consecutiveRenderStalls += 1
+                if consecutiveRenderStalls >= 3 {
+                    // Hard rebind: re-present scene on SKView to force a fresh CVDisplayLink/CADisplayLink!
+                    skView.presentScene(nil)
+                    skView.presentScene(scene)
+                    skView.isPaused = false
+                    scene.isPaused = false
+                    consecutiveRenderStalls = 0
+                    inputLogger.notice("Hard-rebound SKView scene after repeated DisplayLink stalls")
+                } else {
+                    reviveSpriteKitRenderLoop(reason: "watchdog")
+                }
+            }
+            scene.stepFallbackTick(dt: 1.0 / 60.0)
+            skView.needsDisplay = true
+        } else if consecutiveRenderStalls > 0 {
+            consecutiveRenderStalls = 0
+        }
+
         if scene.mode == .tennis {
             if panel.ignoresMouseEvents {
                 panel.ignoresMouseEvents = false

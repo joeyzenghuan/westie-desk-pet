@@ -1,103 +1,108 @@
-# Westie Desk Pet 🐶🐱🎾
+# Westie Desk Pet 🐶🐱🐕🐈🎾
 
-一款原生轻量化 **macOS & Windows 跨平台桌面陪伴宠物（西高地小狗 / 金渐层小猫双角色切换）+ 2.5D 网球对打** 小应用（macOS：Swift 6 + AppKit + SpriteKit；Windows：.NET 8 + WPF + Win32 DWM，共享同一套 82 张像素精灵资产，无需管理员/辅助功能/录屏权限）。
+一款原生轻量化 **macOS & Windows 跨平台桌面陪伴宠物 + 2.5D 网球对打** 小应用（**macOS**：Swift 6 + AppKit + SpriteKit；**Windows 10/11**：.NET 8 + WPF + Win32 DWM，共享同一套 **274 张**像素风透明精灵素材，无需管理员/辅助功能/录屏权限）。
 
-平时它是一只安静探头在屏幕右侧边的像素风小狗或金渐层小猫，不挡窗口正文；当你专心停留在某个窗口一段时间后，它会悄悄从顶栏后方探头张望、翻身跳着走或跳一段魔性「⚡ 闪身步」，最后打个哈欠趴下睡觉；想放松一局时，随时展开半透明桌面网球场，用 **`WASD` + 鼠标** 来一场 5 分制网球对决！
+内置 **4 只可一键切换的像素桌面伙伴**（**🐶 西高地小狗 / 🐱 金渐层小猫 / 🐕 拉布拉多小狗 / 🐈 金吉拉小猫**）。平时安静探头在屏幕最右侧边零打扰陪伴；专心停留在某个窗口后，会悄悄爬上窗口顶栏左看右看趴窗发呆，并按设定间隔上演 **7 组独立趣味特效**（右键一级菜单也可随时单独点播）；累了还可以随时展开半透明桌面网球场，用 **`WASD` + 鼠标** 来一场 5 分制网球对决！
 
 ---
 
 ## ✨ 核心特性
 
-### 1. 桌面陪伴模式（v0.5 双宠物角色 · 窗后潜行 · 闪身步 · 零侵入）
-- **双宠物 100% 全套像素资产切换（🐶 西高地小狗 / 🐱 金渐层小猫）**：
-  - 完整复刻两只宠物的全套透明像素帧（共 82 张精灵图）：右侧探头挥爪、大头趴窗、4 帧真实四足小跑、3 帧欢快跳走、原地转头东张西望、爬顶、打哈欠、犯困半眯、团子睡觉、拎后颈、5 帧直立「闪身步」、2 帧吃零食咀嚼、网球对打全套动作，顶部菜单栏图标与网球文案实时联动切换。
-- **默认常驻「屏幕右侧边」+ 定时爬顶叙事**：
-  - 默认安静驻留在**屏幕最右侧边**（绝不贴在激活窗口右缘挡滚动条），紧贴真实可见狗头/猫头宽度触发悬停挥爪；也可在偏好设置中切换「优先窗口正上方」或「跟随窗口右侧边」。
-  - 停留满设定时间（最低支持 `3 秒` 方便测试，默认 `1 分钟`）且未打字时，宠物自动悄悄缩回屏幕右缘，再从当前激活窗口的标题栏后方**先露小爪探头左右张望 3 秒**、翻身上顶上演完整故事。
-- **双套爬顶动态特效可选**：
-  - **🐾 悠闲巡逻**：镜像翻身朝左 → 3 帧真实欢快跳着向左走 → 身体不动只转头东张西望（右→左→右）→ 4 帧四足小跑向右走 → 面对镜头微笑坐下轻摆头 → 安静等 2.6 秒 → 打大哈欠 → 睁眼趴下 → 犯困半眯 → 闭眼睡着。
-  - **⚡ 闪身步**：还原 5 拍直立双脚舞步（**起势 → 往右闪 → 停 → 准备 → 再往左闪 → 停**），连跳 2 轮后微笑坐下、打哈欠睡觉；也支持 **🎲 随机轮换** 与右键一键预览。
-- **投喂专属零食 + 咀嚼动效**：
-  - 西高地投喂 `🦴 骨头饼干`、金渐层投喂 `🐟 小鱼干`：零食弹跳落地 → 小跑冲过去 → 抱住零食 2 帧张嘴/眯眼咀嚼（伴随像素碎屑飞溅与满足冒泡）。
-- **统一克制的鼠标交互 + 可视化偏好设置弹窗**：
-  - **窗顶悬停绝不乱切图、不吵醒睡着的小宠**；轻点（< 4pt）在勾选的姿态（`😊 微笑歪头坐` / `🐾 安静趴卧` / `🐶 大头趴窗盯镜头` / `💤 团成团子睡觉`）间平滑循环；拖拽（≥ 4pt）带二阶阻尼弹簧钟摆惯性拎起。
-  - 支持 **60% ~ 160% 宠物大小实时缩放**、换窗驻留防抖（含叠窗提前藏起与全屏原地平滑下缩防瞬移）、高速划过害羞缩头、打字免打扰与会议免打扰。
+### 1. 四大宠物 100% 全套像素素材一键切换（共 274 张 PNG）
+- **🐶 西高地小狗**（标志性蓝项圈 + 白毛尖耳 + 啃骨头）
+- **🐱 金渐层小猫**（圆脸祖母绿大眼 + 环纹绒尾 + 吃小鱼干）
+- **🐕 拉布拉多小狗**（奶油米白短毛 + 暖杏金耷拉耳 + 金焦糖尾尖 + 啃骨头）
+- **🐈 金吉拉小猫**（雪白长毛银背影 + 黑眼线绿宝石大眼 + 蓬松羽绒尾 + 吃小鱼干）
+- 顶部菜单栏 / 系统托盘头像、零食道具、咀嚼碎屑、网球对手与赛况文案全部随角色实时联动。
 
-### 2. 2.5D 桌面网球模式（`WASD` + 鼠标对打 · 四档球速调节）
-- **GBA《马里奥网球》风格半透明球场**：直接在桌面中央展开，支持完整三维 `(x, y, z)` 重力、球网高度判定、旋转空气动力与单打边线/二跳得分规则；对手立绘、发球/得分横幅与难度名称随当前宠物自动切换（`休闲小狗 / 网球狗王` ↔ `休闲小猫 / 网球猫王`）。
-- **四档球速可调（默认慢速轻松上手）**：内置 **`🐢 慢速 (默认)` / `🎾 适中` / `⚡️ 标准` / `🔥 快速`** 四档球速并自动记忆，可通过球场顶部按钮、快捷键 `[-]` / `[+]`（或 `[` / `]`）或右键菜单随时切换。
-- **操作指南（兼容中文输入法，基于硬件键码）**：
+### 2. 极简爬顶 + 7 组独立顶栏特效（右键一级菜单直达）
+- **极简初始趴窗姿态**：从屏幕右侧爬上窗口顶栏后，搭爪探头左看右看并自然趴在窗口顶边朝前张望（下巴紧贴顶边零空隙）。
+- **7 组完全独立的顶栏特效**（支持右键一级菜单随时单点播放，或在设置中自由勾选定时轮播）：
+  1. **🐾 跳走巡逻**：3 帧欢快左跳 + 原地转头东张西望 + 4 帧四足小跑右走 → 微笑坐下
+  2. **⚡ 闪身步**：8 帧 192×128 定高复刻经典反倾假动作 + 平移定格魔性舞步
+  3. **🐻 狗熊哆嗦毛**：8 帧开腿举爪 + 额前交叉 `😮` 甩爪 + 斜向侧倾抖爪循环
+  4. **⚽ 浪子踢球**：6 帧张臂起势 + 深蹲后勾蓄力 + 撇踢「W」手势帅气亮相（左右脚对称各一次）
+  5. **🥺 歪头杀**：6 帧端坐前爪不动，多角度萌系歪头连击定格
+  6. **🌀 翻肚皮打滚（点击互动）**：仰躺露肚皮等主人摸，**左键单击一次立刻翻滚到另一侧并冒 `💕`**，超过 10 秒未点击自动起身坐好
+  7. **😴 打哈欠睡觉**：打大哈欠 → 犯困半眯 → 团成团子安稳入睡
+- **专属投喂零食**：小狗投喂 `🦴 骨头饼干`、小猫投喂 `🐟 小鱼干`，伴随小跑追食、2 帧开心咀嚼与像素碎屑特效。
+
+### 3. 零打扰默认配置 & 多屏顺滑体验
+- **开箱即用默认节奏**（可在右键 `⚙️ 设置` 或偏好设置弹窗随时调整）：
+  - 陪伴位置偏好：**屏幕右侧边 + 定时爬顶**
+  - 换窗等待：**15 秒**（含叠窗提前隐藏与全屏原地平滑下缩）
+  - 爬顶等待：**5 分钟**（支持 3 秒 ~ 60 分钟）
+  - 特效间隔：**15 分钟**（支持 5 秒 ~ 1 小时或关闭）
+  - 宠物大小：**150%**（支持 60% ~ 160% 实时缩放）
+- 支持防误点高速划过害羞缩头、打字免打扰、会议免打扰、拎后颈阻尼弹簧拖拽，以及双屏/外接显示器自适应与渲染心跳守护。
+
+### 4. 2.5D 桌面网球模式（`WASD` + 鼠标对打 · 四档球速）
+- 直接在桌面中央展开半透明球场，支持三维 `(x, y, z)` 重力、球网判定、上旋蓄力/切削放小球/高吊球，默认 **`🐢 慢速`** 轻松上手（`慢速 / 适中 / 标准 / 快速` 可调）。
+- **操作指南（基于硬件键码，兼容中文输入法）**：
   | 操作 | 效果 |
   | :--- | :--- |
   | **`W / A / S / D`**（或方向键） | 控制底线球员前后左右跑位 |
   | **双击方向键 / `Space`** | 飞身冲刺救大角度球 |
   | **鼠标移动** | 移动对面半场的落点准星 |
-  | **鼠标左键点按** | 快速平击抽球 / 发球 |
-  | **鼠标左键按住蓄力松开** | 强力上旋抽球（过网急坠、落地加速） |
+  | **鼠标左键点按 / 长按蓄力** | 快速平击抽球 / 强力上旋抽球 / 发球 |
   | **鼠标右键点击** | 瞄近网为 **切削放小球（Drop Shot）**；瞄底线为 **高吊球（Lob）** |
-  | **`-` / `=`（或 `[` / `]` / 顶部球速按钮）** | 实时调慢 / 调快网球速度 |
+  | **`-` / `=`（或 `[` / `]`）** | 实时调慢 / 调快网球球速 |
   | **`R` / 左键（赛末）** | 重新开球再来一局 |
-  | **`ESC` / 右上角按钮 / `⌘⇧T`** | 立即收起球场，宠物回到桌面陪伴位 |
+  | **`ESC` / `⌘⇧T`** | 收起球场回到桌面陪伴 |
 
 ---
 
-## 🚀 构建与运行
+## 🚀 快速安装与运行
 
-### macOS（Swift 6 + AppKit + SpriteKit）
+### 方式 A：直接从 GitHub Releases 下载免编译版本（推荐）
+前往本仓库的 **[Releases](https://github.com/joeyzenghuan/westie-desk-pet/releases)** 页面：
+- **Windows 10/11 (x64)**：下载 `WestieDeskPet-Windows-x64.zip`，解压后直接双击 `WestieDeskPet.exe` 即可运行（已内置 .NET 8 运行时，免装环境）。
+- **macOS (Apple Silicon / macOS 14+)**：下载 `WestieDeskPet-macOS.zip` 解压得到 `WestieDeskPet.app`（首次打开如遇未签名提示可执行 `xattr -dr com.apple.quarantine WestieDeskPet.app` 后双击打开），或按下方方式 B 本地 1 分钟原生编译。
 
-环境要求：**macOS 14.0+**，安装 Xcode 或 Xcode Command Line Tools（Swift 6.0+）。
+---
+
+### 方式 B：从源码一键本地构建安装
+
+#### macOS（Swift 6 + AppKit + SpriteKit）
+环境要求：**macOS 14.0+** + Xcode Command Line Tools（如未安装运行 `xcode-select --install`）。
 
 ```bash
-# 1. 运行内置 42 项物理、动画、AI 与双宠物资产自检
+git clone https://github.com/joeyzenghuan/westie-desk-pet.git
+cd westie-desk-pet
+
+# 1. 运行内置 50 项自检（可选）
 swift run WestieDeskPet --self-test
 
-# 2. 打包独立 macOS 应用 (输出到 dist/WestieDeskPet.app)
+# 2. 编译打包独立应用（输出 dist/WestieDeskPet.app）
 ./scripts/build_app.sh
 
-# 3. 启动桌面伙伴！（启动后常驻顶部菜单栏，不占 Dock 图标）
-open dist/WestieDeskPet.app
+# 3. 安装到「应用程序」目录并启动（常驻顶部菜单栏，不占 Dock）
+rm -rf /Applications/WestieDeskPet.app && cp -R dist/WestieDeskPet.app /Applications/
+open /Applications/WestieDeskPet.app
 ```
 
-也可以直接通过命令行参数直接进入网球模式调试：
-
-```bash
-swift run WestieDeskPet --tennis
-```
-
-### Windows 10 / 11（.NET 8 + WPF + Win32 DWM）
-
-Windows 版位于 `windows/` 目录（`WestieDeskPet.Core` + `WestieDeskPet.Windows` + `WestieDeskPet.Tests`），直接复用仓库内 82 张共享 PNG 精灵（零资产冗余），通过 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 精准贴齐窗口可见边缘、`WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` 丝滑穿透不占任务栏/Alt+Tab，并提供系统托盘图标与原生偏好设置弹窗：
+#### Windows 10 / 11（.NET 8 + WPF + Win32 DWM）
+环境要求：**Windows 10/11 (x64)** + [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)（可用 `winget install Microsoft.DotNet.SDK.8` 一键安装）。
 
 ```powershell
-# 在 Windows 上运行测试并打包单文件便携版（含 .NET 运行时，解压即用）
+git clone https://github.com/joeyzenghuan/westie-desk-pet.git
+cd westie-desk-pet
+
+# 运行测试并打包单文件便携版（含 .NET 运行时，输出 dist\windows-win-x64\WestieDeskPet.exe）
 .\scripts\build_windows.ps1 -Runtime win-x64 -SelfContained
 
-# 启动（支持 --tennis 直接进入网球模式）
-.\dist\windows-win-x64\WestieDeskPet.exe
+# 启动桌面伙伴（常驻右下角系统托盘）
+Start-Process .\dist\windows-win-x64\WestieDeskPet.exe
 ```
 
-也可以在 **macOS 上直接交叉编译** Windows 可执行文件：
+也支持在 macOS 上交叉编译 Windows 版：
 
 ```bash
-# 运行核心引擎 xUnit 单元测试并交叉编译出 dist/windows-win-x64/WestieDeskPet.exe
 ./scripts/build_windows_from_mac.sh win-x64 false
-
-# 如需打不依赖 .NET 运行时的独立便携包（带 -SelfContained）
-./scripts/build_windows_from_mac.sh win-x64 true
 ```
-
-同时已配置 GitHub Actions（`.github/workflows/windows-build.yml`），推送分支即可在 `windows-latest` 自动跑测试并产出 `WestieDeskPet-Windows-x64.zip` 下载包。
 
 ---
 
-## 🎨 AI 像素美术资产管线（Azure GPT-Image-2.5）
+## 🎨 像素资产生成脚本（开发者可选）
 
-全部 82 张透明背景像素精灵（西高地 43 张含共用道具 + 金渐层 39 张）均由 `scripts/generate_*.py` 与 `scripts/process_sprites.py` 通过多参考图锁形自动生成与规范化切图：
-
-```bash
-export AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com"
-export AZURE_OPENAI_API_KEY="<your-api-key>"
-
-uv run --with pillow --with numpy python scripts/generate_assets.py
-uv run --with pillow --with numpy python scripts/process_sprites.py
-```
+全部 274 张透明像素精灵已直接打包在 `Sources/WestieDeskPet/Resources/Sprites/` 中，**日常编译与使用无需任何 API Key**。如需用 Azure OpenAI 图像模型二次扩展新宠物或新动作，可参考 `scripts/generate_*.py`（通过 `AZURE_OPENAI_ENDPOINT` 与 `AZURE_OPENAI_API_KEY` 环境变量传入凭据）。

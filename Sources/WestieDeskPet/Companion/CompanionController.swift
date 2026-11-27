@@ -49,6 +49,45 @@ public final class CompanionController {
     private var walkFrameIndex: Int = 0
     private var currentWalkSpeed: CGFloat = 0
 
+    private static let bearShakeFrames: [SpriteAssetKey] = [
+        .westieBearShake1, .westieBearShake2, .westieBearShake3, .westieBearShake4,
+        .westieBearShake5, .westieBearShake6, .westieBearShake7, .westieBearShake8
+    ]
+    private static let bearShakeDurations: [TimeInterval] = [
+        0.16, 0.15, 0.24, 0.16, 0.18, 0.14, 0.24, 0.15
+    ]
+    private static let bearShakeOffsets: [CGFloat] = [
+        7.0, 9.0, 10.0, 0.0, -9.0, -10.0, -8.0, 1.0
+    ]
+
+    private static let wandererKickFrames: [SpriteAssetKey] = [
+        .westieWandererKick1, .westieWandererKick2, .westieWandererKick3,
+        .westieWandererKick4, .westieWandererKick5, .westieWandererKick6
+    ]
+    private static let wandererKickDurations: [TimeInterval] = [
+        0.24, 0.30, 0.48, 0.10, 0.74, 0.24
+    ]
+
+    private static let bellyRollIdleTimeout: TimeInterval = 10.0
+
+    // Exact 5-tilt cascade from `歪头杀.gif`:
+    // tongue-out sit -> deep Left (-34°) -> center -> Right (+20°) -> center pause
+    // -> deep Left (-34°) -> center -> Right 2-stage (+20° -> +33°) -> fast whip -> Hero Left (-36°) -> calm center!
+    private static let headTiltSequence: [(key: SpriteAssetKey, duration: TimeInterval)] = [
+        (.westieHeadTilt1, 0.36),
+        (.westieHeadTilt3, 0.42),
+        (.westieHeadTilt2, 0.09),
+        (.westieHeadTilt4, 0.38),
+        (.westieHeadTilt2, 0.34),
+        (.westieHeadTilt3, 0.42),
+        (.westieHeadTilt2, 0.08),
+        (.westieHeadTilt4, 0.18),
+        (.westieHeadTilt5, 0.36),
+        (.westieHeadTilt2, 0.07),
+        (.westieHeadTilt6, 0.72),
+        (.westieHeadTilt2, 0.28)
+    ]
+
     private static let walkCycleFrames: [SpriteAssetKey] = [
         .westieWalk1, .westieWalk2, .westieWalk3, .westieWalk4
     ]
@@ -94,6 +133,8 @@ public final class CompanionController {
     private var screenRightCustomYRatio: CGFloat = 0.66
     private var zoneStayTimer: TimeInterval = 0
     public private(set) var rightPeekDwellTimer: TimeInterval = 0
+    public private(set) var topBarEffectTimer: TimeInterval = 0
+    private var lastAutoTopEffect: TopBarEffect?
 
     // Focus timer -> gently hold tennis ball after 25 minutes of work
     private var focusAccumulator: TimeInterval = 0
@@ -101,9 +142,10 @@ public final class CompanionController {
 
     private var scaleFactor: CGFloat { CGFloat(preferences.dogScale) }
     private var topDogSize: CGSize { CGSize(width: 66 * scaleFactor, height: 66 * scaleFactor) }
+    private var flashStepDogSize: CGSize { CGSize(width: 99 * scaleFactor, height: 66 * scaleFactor) }
     private var yawnDogSize: CGSize { CGSize(width: 54 * scaleFactor, height: 54 * scaleFactor) }
-    private var chinLedgeDogSize: CGSize { CGSize(width: 54 * scaleFactor, height: 54 * scaleFactor) }
-    private var topPeekDogSize: CGSize { CGSize(width: 44 * scaleFactor, height: 44 * scaleFactor) }
+    private var chinLedgeDogSize: CGSize { CGSize(width: 48 * scaleFactor, height: 48 * scaleFactor) }
+    private var topPeekDogSize: CGSize { CGSize(width: 48 * scaleFactor, height: 48 * scaleFactor) }
     private var peekDogSize: CGSize { CGSize(width: 76 * scaleFactor, height: 76 * scaleFactor) }
 
     public var isNeedingHighFPS: Bool {
@@ -342,6 +384,7 @@ public final class CompanionController {
     public func moveImmediatelyToZone(_ targetZone: PerchZone, snapshot: ActiveWorkspaceSnapshot, sceneSize: CGSize) {
         pendingWindowSwitch = nil
         rightPeekDwellTimer = 0
+        topBarEffectTimer = 0
         let layout = snapshot.perchLayout
         switch targetZone {
         case .windowTop:
@@ -350,7 +393,7 @@ public final class CompanionController {
                 beginStealthClimbToTop(
                     targetX: x,
                     windowID: layout.activeWindowID ?? trackedWindowID,
-                    climbToGreet: false
+                    effectOnArrival: nil
                 )
             }
         case .windowRightPeek:
@@ -377,6 +420,109 @@ public final class CompanionController {
                 zone: .screenRightPeek,
                 layout: layout
             )
+        }
+    }
+
+    /// Triggers an independent top-bar effect (`patrol`, `flashStep`, or `yawnSleep`) on demand.
+    /// If perched on the right edge, climbs onto the active window's top bar first;
+    /// if resting in the initial head-on-ledge peek pose, rises smoothly onto all four paws first!
+    public func triggerTopBarEffect(
+        _ effect: TopBarEffect,
+        snapshot: ActiveWorkspaceSnapshot,
+        sceneSize: CGSize
+    ) {
+        pendingWindowSwitch = nil
+        rightPeekDwellTimer = 0
+        topBarEffectTimer = 0
+        treatNode?.removeFromParent()
+        treatNode = nil
+
+        guard let top = snapshot.perchLayout.topPerch else { return }
+        let activeWinID = snapshot.perchLayout.activeWindowID ?? trackedWindowID
+
+        if perchZone == .windowTop && trackedWindowID == activeWinID {
+            currentPlatform = top
+            if case .chinRest = state {
+                facingDirection = -1.0
+                state = .topStory(step: .risingToFullBody(elapsed: 0, duration: 0.62, nextEffect: effect))
+            } else {
+                startTopBarEffect(effect, on: top)
+            }
+        } else {
+            let targetX = top.clampedX(top.maxX - min(110, top.width * 0.26), margin: 22)
+            beginStealthClimbToTop(targetX: targetX, windowID: activeWinID, effectOnArrival: effect)
+        }
+    }
+
+    private func startTopBarEffect(_ effect: TopBarEffect, on top: WindowPlatform) {
+        topBarEffectTimer = 0
+        currentWalkSpeed = 0
+        lastAutoTopEffect = effect
+        switch effect {
+        case .patrol:
+            facingDirection = -1.0
+            state = .topStory(step: .postClimbPause(elapsed: 0, duration: 0.35))
+
+        case .flashStep:
+            facingDirection = 1.0
+            let desiredDist = min(30.0 * scaleFactor, max(14.0, top.width * 0.08))
+            let safeOriginX = top.clampedX(max(position.x, top.minX + desiredDist + 26.0), margin: 26.0)
+            let maxLeftRoom = max(12.0, safeOriginX - (top.minX + 24.0))
+            let travelDist = min(desiredDist, maxLeftRoom)
+            position = CGPoint(x: safeOriginX, y: top.y)
+            offsetFromWindowMinX = safeOriginX - top.windowMinX
+            state = .topStory(step: .flashStep(
+                roundsRemaining: 2,
+                originX: safeOriginX,
+                travelDist: travelDist,
+                beat: .holdStart(elapsed: 0, duration: 0.14)
+            ))
+
+        case .bearShake:
+            facingDirection = 1.0
+            let marginX: CGFloat = max(28.0, 14.0 * scaleFactor + 18.0)
+            let safeOriginX = top.clampedX(position.x, margin: marginX)
+            position = CGPoint(x: safeOriginX, y: top.y)
+            offsetFromWindowMinX = safeOriginX - top.windowMinX
+            state = .topStory(step: .bearShake(
+                cyclesRemaining: 2,
+                originX: safeOriginX,
+                frameIndex: 0,
+                elapsed: 0
+            ))
+
+        case .wandererKick:
+            facingDirection = 1.0
+            let safeX = top.clampedX(position.x, margin: 26.0)
+            position = CGPoint(x: safeX, y: top.y)
+            offsetFromWindowMinX = safeX - top.windowMinX
+            state = .topStory(step: .wandererKick(
+                roundsRemaining: 2,
+                mirrorSign: 1.0,
+                frameIndex: 0,
+                elapsed: 0
+            ))
+
+        case .headTilt:
+            facingDirection = 1.0
+            let safeX = top.clampedX(position.x, margin: 22.0)
+            position = CGPoint(x: safeX, y: top.y)
+            offsetFromWindowMinX = safeX - top.windowMinX
+            state = .topStory(step: .headTilt(stepIndex: 0, elapsed: 0))
+
+        case .windowRoll:
+            facingDirection = 1.0
+            let safeX = top.clampedX(position.x, margin: 26.0)
+            position = CGPoint(x: safeX, y: top.y)
+            offsetFromWindowMinX = safeX - top.windowMinX
+            state = .topStory(step: .bellyRoll(
+                phase: .flopDown(elapsed: 0, duration: 0.24),
+                sideSign: 1.0
+            ))
+
+        case .yawnSleep:
+            facingDirection = 1.0
+            state = .yawning(elapsed: 0, duration: 1.85)
         }
     }
 
@@ -426,7 +572,7 @@ public final class CompanionController {
         let k = scaleFactor
         let mouthX = position.x + (facingDirection >= 0 ? 14.0 : -14.0) * k
         let mouthY = position.y + 18.0 * k
-        let crumbColor = (preferences.petSpecies == .goldenCat)
+        let crumbColor = preferences.petSpecies.isCat
             ? NSColor(calibratedRed: 0.88, green: 0.67, blue: 0.36, alpha: 0.95)
             : NSColor(calibratedRed: 0.96, green: 0.91, blue: 0.78, alpha: 0.95)
 
@@ -454,7 +600,7 @@ public final class CompanionController {
 
         if finalSparkle {
             let note = SKLabelNode(fontNamed: "Menlo-Bold")
-            note.text = (preferences.petSpecies == .goldenCat) ? "🐟✨" : "🦴✨"
+            note.text = preferences.petSpecies.isCat ? "🐟✨" : "🦴✨"
             note.fontSize = 13 * max(0.9, k * 0.85)
             note.position = CGPoint(x: position.x, y: position.y + 52 * k)
             note.zPosition = 7
@@ -667,6 +813,38 @@ public final class CompanionController {
             return
         }
 
+        // 1b. Interactive Belly-Up Roll-Over (`翻肚皮打滚`):
+        //     Clicking while lying belly-up flips the pet smoothly onto the OTHER side and resets the 10s timer!
+        if case .topStory(step: .bellyRoll(let phase, let sideSign)) = state {
+            switch phase {
+            case .waitingBellyUp, .flopDown:
+                let nextSide: CGFloat = -sideSign
+                let nudge: CGFloat = nextSide * 10.0 * scaleFactor
+                let startX = position.x
+                let targetX = currentPlatform?.clampedX(startX + nudge, margin: 24.0) ?? startX
+                squashSpring.impulse(1.8)
+                spawnBellyRubSparkle()
+                state = .topStory(step: .bellyRoll(
+                    phase: .rollingOver(
+                        elapsed: 0,
+                        duration: 0.56,
+                        fromSide: sideSign,
+                        toSide: nextSide,
+                        startX: startX,
+                        targetX: targetX
+                    ),
+                    sideSign: nextSide
+                ))
+                return
+            case .rollingOver:
+                // Already mid-roll; give a cute extra bounce without double-canceling!
+                squashSpring.impulse(1.2)
+                return
+            case .standingUp:
+                break
+            }
+        }
+
         // 2. Top-bar unified tap interaction ("摸摸头"):
         //    Cycles cleanly through the user's selected `topTapEnabledPoses` (default: sitSmile -> loafCalm -> bigHeadPeek)!
         greetingHoverAccumulator = 0
@@ -810,7 +988,7 @@ public final class CompanionController {
 
         case .windowTop:
             if let top = newLayout.topPerch {
-                return .windowTop(targetX: top.clampedX(previousPosition.x, margin: 22), climbToGreet: false)
+                return .windowTop(targetX: top.clampedX(previousPosition.x, margin: 22), effectOnArrival: nil)
             }
             return .screenRightPeek(targetY: newLayout.screenRightPeek.clampedY(previousPosition.y))
 
@@ -868,7 +1046,7 @@ public final class CompanionController {
                 currentRightAnchor = right
             } else if let top = layout.topPerch {
                 let x = top.clampedX(top.minX + top.width * 0.65, margin: 20)
-                beginStealthClimbToTop(targetX: x, windowID: layout.activeWindowID ?? trackedWindowID, climbToGreet: false)
+                beginStealthClimbToTop(targetX: x, windowID: layout.activeWindowID ?? trackedWindowID, effectOnArrival: nil)
             } else {
                 snapToScreenRightPeek(layout.screenRightPeek, sceneSize: sceneSize)
             }
@@ -923,6 +1101,12 @@ public final class CompanionController {
         // Stay calmly on the screen's right edge with zero distraction! Just reset dwell timer if active window changes.
         let activeID = layout.activeWindowID ?? 0
         if perchZone == .screenRightPeek {
+            if case .tuckedWaiting = state {
+                // Guard: never allow `.tuckedWaiting` to persist on screen-right bezel!
+                state = .peekingRight(remaining: 25.0)
+                peekEmergeSpring.value = -0.8
+                peekEmergeSpring.target = 0
+            }
             if perchPreference == .auto {
                 if activeID != 0 && activeID != trackedWindowID {
                     trackedWindowID = activeID
@@ -955,6 +1139,15 @@ public final class CompanionController {
             // Keep Westie locked to the old window while waiting (if still visible)
             if oldWindowStillVisible, let oldLayout = snapshot.perchLayout(forWindowID: trackedWindowID) {
                 anchorPositionToWindowLayout(oldLayout, sceneSize: sceneSize)
+
+                // If `anchorPositionToWindowLayout` already fell back to `.screenRightPeek` (e.g. old window moved flush to menu bar),
+                // bail out cleanly so we NEVER enter `.tuckedWaiting` on the screen bezel!
+                if perchZone == .screenRightPeek {
+                    pendingWindowSwitch = nil
+                    trackedWindowID = activeID
+                    rightPeekDwellTimer = 0
+                    return
+                }
 
                 // Overlap guard (`tuck_early`): if the newly focused window covers Westie's current spot,
                 // duck behind the old window immediately so Westie never floats awkwardly over foreground text!
@@ -1009,7 +1202,7 @@ public final class CompanionController {
                 switch originZone {
                 case .windowTop:
                     let x = layout.topPerch?.clampedX(position.x, margin: 18) ?? position.x
-                    reemergeDest = .windowTop(targetX: x, climbToGreet: false)
+                    reemergeDest = .windowTop(targetX: x, effectOnArrival: nil)
                 case .windowRightPeek:
                     let y = layout.windowRightPeek?.clampedY(position.y) ?? position.y
                     reemergeDest = .windowRightPeek(targetY: y)
@@ -1090,12 +1283,13 @@ public final class CompanionController {
         }
     }
 
-    /// Stealthily retracts from the right edge and climbs up from behind the active window's top bar!
+    /// Stealthily retracts from the right edge and peeks/climbs onto the active window's top bar!
+    /// - `effectOnArrival == nil`: peeks head, looks left & right, and rests in the initial head-on-ledge pose.
+    /// - `effectOnArrival != nil`: climbs full-body onto top bar and immediately performs that effect!
     public func beginStealthClimbToTop(
         targetX: CGFloat,
         windowID: UInt32,
-        climbToGreet: Bool,
-        routineOverride: TopClimbRoutine? = nil
+        effectOnArrival: TopBarEffect? = nil
     ) {
         let originZone = perchZone
         let originWinID = trackedWindowID
@@ -1105,11 +1299,11 @@ public final class CompanionController {
         }
         let initialPhase: StealthPhase = (originZone == .windowTop)
             ? .hiddenTraverse(elapsed: 0, duration: 0.16)
-            : .retracting(elapsed: 0, duration: 0.62)
+            : .retracting(elapsed: 0, duration: 0.56)
         state = .stealthTransition(
             phase: initialPhase,
             originZone: originZone,
-            destination: .windowTop(targetX: targetX, climbToGreet: climbToGreet, routineOverride: routineOverride),
+            destination: .windowTop(targetX: targetX, effectOnArrival: effectOnArrival),
             originWindowID: originWinID,
             destWindowID: windowID
         )
@@ -1188,10 +1382,11 @@ public final class CompanionController {
         offsetFromWindowMinX = x - platform.windowMinX
         position = CGPoint(x: x, y: platform.y)
         zoneStayTimer = 0
+        topBarEffectTimer = 0
         if forceQuietSleep {
             state = .sleeping(remaining: 25.0)
         } else {
-            state = .idle(remaining: 4.5)
+            state = .chinRest(remaining: 60.0)
         }
     }
 
@@ -1241,40 +1436,21 @@ public final class CompanionController {
         greetingHoverAccumulator = 0
 
         switch destination {
-        case .windowTop(let targetX, let climbToGreet, let routineOverride):
-            squashSpring.impulse(-1.4) // Soft cushioned settle onto the top bar!
+        case .windowTop(let targetX, let effectOnArrival):
+            topBarEffectTimer = 0
             if let top = destLayout.topPerch {
                 landOnWindowTop(top, atX: targetX)
-                if climbToGreet && !forceQuietSleep && !snapshot.isMeetingActive {
-                    greetingPhase = 0
-                    greetingTotalDuration = preferences.greetingDurationSeconds
-                    didGreetingPerkHop = false
-                    let chosenRoutine: TopClimbRoutine = {
-                        let base = routineOverride ?? preferences.topClimbRoutine
-                        if base == .random {
-                            return Bool.random() ? .flashStep : .classicStory
-                        }
-                        return base
-                    }()
-                    if chosenRoutine == .flashStep {
-                        // Start the iconic 5-beat upright bipedal "闪身步" dance (`起势 → 往右闪 → 停 → 准备 → 再往左闪 → 停`)!
-                        facingDirection = 1.0
-                        state = .topStory(step: .flashStep(
-                            roundsRemaining: 2,
-                            beat: .stance(elapsed: 0, duration: 0.44)
-                        ))
-                    } else {
-                        // Classic story: orient briefly -> playful hop-walk LEFT -> look around -> walk RIGHT -> smile -> yawn -> sleep!
-                        facingDirection = -1.0
-                        state = .topStory(step: .postClimbPause(elapsed: 0, duration: 0.42))
-                    }
+                if let effect = effectOnArrival, !forceQuietSleep && !snapshot.isMeetingActive {
+                    squashSpring.impulse(-1.4)
+                    startTopBarEffect(effect, on: top)
+                } else if !forceQuietSleep && !snapshot.isMeetingActive {
+                    // Default climb-to-top arrival: stay peacefully resting head+paws on top bar looking forward!
+                    facingDirection = 1.0
+                    state = .chinRest(remaining: 60.0)
                 }
             } else {
                 perchZone = .windowTop
-                greetingPhase = 0
-                greetingTotalDuration = preferences.greetingDurationSeconds
-                didGreetingPerkHop = false
-                state = climbToGreet ? .yawning(elapsed: 0, duration: 1.75) : .idle(remaining: 5.0)
+                state = .chinRest(remaining: 60.0)
             }
 
         case .windowRightPeek(let targetY):
@@ -1309,6 +1485,11 @@ public final class CompanionController {
 
         switch state {
         case .tuckedWaiting(let elapsed, let duration, let originZone):
+            // Defensive invariant: `.tuckedWaiting` is ONLY valid while awaiting a pending window switch off-bezel!
+            if pendingWindowSwitch == nil || perchZone == .screenRightPeek {
+                state = (perchZone == .windowTop) ? .idle(remaining: 5.0) : .peekingRight(remaining: 25.0)
+                break
+            }
             let next = min(duration, elapsed + dt)
             state = .tuckedWaiting(elapsed: next, duration: duration, originZone: originZone)
 
@@ -1345,7 +1526,7 @@ public final class CompanionController {
                     let destLayout = snapshot.perchLayout(forWindowID: destWindowID) ?? layout
                     trackedWindowID = destWindowID != 0 ? destWindowID : (destLayout.activeWindowID ?? trackedWindowID)
                     switch destination {
-                    case .windowTop(let targetX, let climbToGreet, let routineOverride):
+                    case .windowTop(let targetX, let effectOnArrival):
                         if let top = destLayout.topPerch {
                             let clampedX = top.clampedX(targetX, margin: 18)
                             perchZone = .windowTop
@@ -1353,7 +1534,7 @@ public final class CompanionController {
                             currentRightAnchor = nil
                             offsetFromWindowMinX = clampedX - top.windowMinX
                             position = CGPoint(x: clampedX, y: top.y)
-                            destination = .windowTop(targetX: clampedX, climbToGreet: climbToGreet, routineOverride: routineOverride)
+                            destination = .windowTop(targetX: clampedX, effectOnArrival: effectOnArrival)
                         }
                     case .windowRightPeek(let targetY):
                         if let right = destLayout.windowRightPeek {
@@ -1427,14 +1608,25 @@ public final class CompanionController {
                 }
                 let next = elapsed + dt
                 if next >= duration {
-                    let settleDur: TimeInterval = (destination.perchZone == .windowTop) ? 0.72 : 0.44
-                    state = .stealthTransition(
-                        phase: .settlingOut(elapsed: 0, duration: settleDur),
-                        originZone: originZone,
-                        destination: destination,
-                        originWindowID: originWindowID,
-                        destWindowID: destWindowID
-                    )
+                    // If arriving at `windowTop` with NO immediate full-body effect, stay seamlessly in the exact same
+                    // head-on-ledge forward pose (ZERO jump / ZERO full-body popup!).
+                    if case .windowTop(_, let effectOnArrival) = destination, effectOnArrival == nil {
+                        completeStealthArrival(
+                            destination: destination,
+                            destWindowID: destWindowID,
+                            snapshot: snapshot,
+                            sceneSize: sceneSize
+                        )
+                    } else {
+                        let settleDur: TimeInterval = (destination.perchZone == .windowTop) ? 0.68 : 0.44
+                        state = .stealthTransition(
+                            phase: .settlingOut(elapsed: 0, duration: settleDur),
+                            originZone: originZone,
+                            destination: destination,
+                            originWindowID: originWindowID,
+                            destWindowID: destWindowID
+                        )
+                    }
                 } else {
                     state = .stealthTransition(
                         phase: .tentativePeek(elapsed: next, duration: duration),
@@ -1475,6 +1667,16 @@ public final class CompanionController {
             }
 
             switch step {
+            case .risingToFullBody(let elapsed, let duration, let nextEffect):
+                currentWalkSpeed = 0
+                let next = elapsed + dt
+                if next >= duration {
+                    squashSpring.impulse(-1.4)
+                    startTopBarEffect(nextEffect, on: top)
+                } else {
+                    state = .topStory(step: .risingToFullBody(elapsed: next, duration: duration, nextEffect: nextEffect))
+                }
+
             case .postClimbPause(let elapsed, let duration):
                 currentWalkSpeed = 0
                 facingDirection = -1.0
@@ -1614,115 +1816,393 @@ public final class CompanionController {
                     state = .topStory(step: .postWalkPause(elapsed: next, duration: duration))
                 }
 
-            case .flashStep(let roundsRemaining, let beat):
+            case .flashStep(let roundsRemaining, let originX, let travelDist, let beat):
                 currentWalkSpeed = 0
                 facingDirection = 1.0
-                let stepDist: CGFloat = min(52.0 * scaleFactor, max(24.0, top.width * 0.14))
+                // Keep `originX` locked relative to window if user drags window mid-dance!
+                let d = travelDist
+
+                func setRelX(_ frac: CGFloat) {
+                    let nx = top.clampedX(originX + frac * d, margin: 20)
+                    position.x = nx
+                    offsetFromWindowMinX = nx - top.windowMinX
+                }
 
                 switch beat {
-                case .stance(let elapsed, let duration):
-                    let next = elapsed + dt
-                    if next >= duration {
-                        let rightX = min(top.maxX - 24, position.x + stepDist)
-                        squashSpring.impulse(1.6)
-                        state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .dodgeRight(elapsed: 0, duration: 0.48, startX: position.x, targetX: rightX)
-                        ))
-                    } else {
-                        state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .stance(elapsed: next, duration: duration)
-                        ))
-                    }
-
-                case .dodgeRight(let elapsed, let duration, let startX, let targetX):
-                    let next = elapsed + dt
-                    // Snappy dodge during first 48% of beat, then crisp swagger hold!
-                    let dashU = min(1.0, CGFloat(next / max(duration * 0.48, 0.01)))
-                    let eased = Self.easeOutCubic(dashU)
-                    position.x = top.clampedX(startX + (targetX - startX) * eased, margin: 22)
-                    offsetFromWindowMinX = position.x - top.windowMinX
-                    if next >= duration {
-                        squashSpring.impulse(-1.4)
-                        state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .stopMid(elapsed: 0, duration: 0.42)
-                        ))
-                    } else {
-                        state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .dodgeRight(elapsed: next, duration: duration, startX: startX, targetX: targetX)
-                        ))
-                    }
-
-                case .stopMid(let elapsed, let duration):
+                case .holdStart(let elapsed, let duration):
+                    setRelX(0.0)
                     let next = elapsed + dt
                     if next >= duration {
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .readyLeft(elapsed: 0, duration: 0.38)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .popLeft(elapsed: 0, duration: 0.08)
                         ))
                     } else {
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .stopMid(elapsed: next, duration: duration)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .holdStart(elapsed: next, duration: duration)
                         ))
                     }
 
-                case .readyLeft(let elapsed, let duration):
+                case .popLeft(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    setRelX(-0.02 * u)
+                    if next >= duration {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .splitFeintLeft(elapsed: 0, duration: 0.22)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .popLeft(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .splitFeintLeft(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    // Counter-overshoot +6% RIGHT (fake-out!) during first 60%, then whip into -8% LEFT!
+                    let frac: CGFloat = (u < 0.60)
+                        ? (0.06 * (u / 0.60))
+                        : (0.06 - 0.14 * ((u - 0.60) / 0.40))
+                    setRelX(frac)
+                    if next >= duration {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .glideWideLeft(elapsed: 0, duration: 0.18)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .splitFeintLeft(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .glideWideLeft(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    // Ease-out quad: teleport surge from -8% -> -60% LEFT over pinned left foot!
+                    let eased = 1.0 - (1.0 - u) * (1.0 - u)
+                    setRelX(-0.08 - 0.52 * eased)
+                    if next >= duration {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .snapCloseLeft(elapsed: 0, duration: 0.18)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .glideWideLeft(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .snapCloseLeft(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    let eased = Self.easeOutCubic(u)
+                    setRelX(-0.60 - 0.38 * eased)
+                    if next >= duration {
+                        setRelX(-1.0)
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .statueFreezeLeft(elapsed: 0, duration: 0.72)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .snapCloseLeft(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .statueFreezeLeft(let elapsed, let duration):
+                    setRelX(-1.0)
                     let next = elapsed + dt
                     if next >= duration {
-                        let leftX = max(top.minX + 24, position.x - stepDist)
-                        squashSpring.impulse(1.6)
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .dodgeLeft(elapsed: 0, duration: 0.50, startX: position.x, targetX: leftX)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .popRight(elapsed: 0, duration: 0.08)
                         ))
                     } else {
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .readyLeft(elapsed: next, duration: duration)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .statueFreezeLeft(elapsed: next, duration: duration)
                         ))
                     }
 
-                case .dodgeLeft(let elapsed, let duration, let startX, let targetX):
+                case .popRight(let elapsed, let duration):
                     let next = elapsed + dt
-                    let dashU = min(1.0, CGFloat(next / max(duration * 0.48, 0.01)))
-                    let eased = Self.easeOutCubic(dashU)
-                    position.x = top.clampedX(startX + (targetX - startX) * eased, margin: 22)
-                    offsetFromWindowMinX = position.x - top.windowMinX
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    setRelX(-1.0 + 0.02 * u)
                     if next >= duration {
-                        squashSpring.impulse(-1.4)
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .finishStop(elapsed: 0, duration: 0.46)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .splitFeintRight(elapsed: 0, duration: 0.23)
                         ))
                     } else {
                         state = .topStory(step: .flashStep(
-                            roundsRemaining: roundsRemaining,
-                            beat: .dodgeLeft(elapsed: next, duration: duration, startX: startX, targetX: targetX)
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .popRight(elapsed: next, duration: duration)
                         ))
                     }
 
-                case .finishStop(let elapsed, let duration):
+                case .splitFeintRight(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    // Exact mirror fake-out: overshoot -7% LEFT during first 55%, then surge to -88%!
+                    let frac: CGFloat = (u < 0.55)
+                        ? (-1.0 - 0.07 * (u / 0.55))
+                        : (-1.07 + 0.19 * ((u - 0.55) / 0.45))
+                    setRelX(frac)
+                    if next >= duration {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .glideWideRight(elapsed: 0, duration: 0.18)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .splitFeintRight(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .glideWideRight(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    let eased = 1.0 - (1.0 - u) * (1.0 - u)
+                    setRelX(-0.88 + 0.53 * eased)
+                    if next >= duration {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .snapCloseRight(elapsed: 0, duration: 0.20)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .glideWideRight(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .snapCloseRight(let elapsed, let duration):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    let eased = Self.easeOutCubic(u)
+                    setRelX(-0.35 + 0.33 * eased)
+                    if next >= duration {
+                        setRelX(0.0)
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .statueFinish(elapsed: 0, duration: 0.70)
+                        ))
+                    } else {
+                        state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .snapCloseRight(elapsed: next, duration: duration)
+                        ))
+                    }
+
+                case .statueFinish(let elapsed, let duration):
+                    setRelX(0.0)
                     let next = elapsed + dt
                     if next >= duration {
                         let remainingRounds = roundsRemaining - 1
                         if remainingRounds > 0 {
-                            // Repeat one more rhythmic beat starting right back into `起势`!
                             state = .topStory(step: .flashStep(
-                                roundsRemaining: remainingRounds,
-                                beat: .stance(elapsed: 0, duration: 0.38)
+                                roundsRemaining: remainingRounds, originX: originX, travelDist: d,
+                                beat: .popLeft(elapsed: 0, duration: 0.08)
                             ))
                         } else {
-                            // Done dancing -> sit smiling proudly, then quiet pause -> yawn -> sleep!
-                            state = .topStory(step: .smileSit(elapsed: 0, duration: 4.2))
+                            // Done with Flash-Step -> brief proud smile sit, then calm resting on top bar!
+                            state = .topStory(step: .smileSit(elapsed: 0, duration: 3.4))
                         }
                     } else {
                         state = .topStory(step: .flashStep(
+                            roundsRemaining: roundsRemaining, originX: originX, travelDist: d,
+                            beat: .statueFinish(elapsed: next, duration: duration)
+                        ))
+                    }
+                }
+
+            case .bearShake(let cyclesRemaining, let originX, let frameIndex, let elapsed):
+                currentWalkSpeed = 0
+                facingDirection = 1.0
+                let idx = min(max(frameIndex, 0), Self.bearShakeDurations.count - 1)
+                let dur = Self.bearShakeDurations[idx]
+                let offsetX = Self.bearShakeOffsets[idx] * scaleFactor
+                let liveX = top.clampedX(originX + offsetX, margin: 20)
+                position.x = liveX
+                offsetFromWindowMinX = liveX - top.windowMinX
+
+                let next = elapsed + dt
+                if next >= dur {
+                    let nextIdx = idx + 1
+                    if nextIdx < Self.bearShakeDurations.count {
+                        state = .topStory(step: .bearShake(
+                            cyclesRemaining: cyclesRemaining,
+                            originX: originX,
+                            frameIndex: nextIdx,
+                            elapsed: 0
+                        ))
+                    } else if cyclesRemaining > 1 {
+                        state = .topStory(step: .bearShake(
+                            cyclesRemaining: cyclesRemaining - 1,
+                            originX: originX,
+                            frameIndex: 0,
+                            elapsed: 0
+                        ))
+                    } else {
+                        let restX = top.clampedX(originX, margin: 20)
+                        position.x = restX
+                        offsetFromWindowMinX = restX - top.windowMinX
+                        state = .topStory(step: .smileSit(elapsed: 0, duration: 2.6))
+                    }
+                } else {
+                    state = .topStory(step: .bearShake(
+                        cyclesRemaining: cyclesRemaining,
+                        originX: originX,
+                        frameIndex: idx,
+                        elapsed: next
+                    ))
+                }
+
+            case .wandererKick(let roundsRemaining, let mirrorSign, let frameIndex, let elapsed):
+                currentWalkSpeed = 0
+                facingDirection = mirrorSign
+                let idx = min(max(frameIndex, 0), Self.wandererKickDurations.count - 1)
+                let dur = Self.wandererKickDurations[idx]
+                let next = elapsed + dt
+                if next >= dur {
+                    let nextIdx = idx + 1
+                    if nextIdx < Self.wandererKickDurations.count {
+                        if nextIdx == 3 {
+                            squashSpring.impulse(1.8) // Punchy whip-kick snap!
+                        }
+                        state = .topStory(step: .wandererKick(
                             roundsRemaining: roundsRemaining,
-                            beat: .finishStop(elapsed: next, duration: duration)
+                            mirrorSign: mirrorSign,
+                            frameIndex: nextIdx,
+                            elapsed: 0
+                        ))
+                    } else if roundsRemaining > 1 {
+                        // Flip horizontally for symmetric opposite-leg kick!
+                        state = .topStory(step: .wandererKick(
+                            roundsRemaining: roundsRemaining - 1,
+                            mirrorSign: -mirrorSign,
+                            frameIndex: 1, // Jump straight into crouch for snappy combo!
+                            elapsed: 0
+                        ))
+                    } else {
+                        facingDirection = 1.0
+                        state = .topStory(step: .smileSit(elapsed: 0, duration: 2.6))
+                    }
+                } else {
+                    state = .topStory(step: .wandererKick(
+                        roundsRemaining: roundsRemaining,
+                        mirrorSign: mirrorSign,
+                        frameIndex: idx,
+                        elapsed: next
+                    ))
+                }
+
+            case .headTilt(let stepIndex, let elapsed):
+                currentWalkSpeed = 0
+                facingDirection = 1.0
+                let idx = min(max(stepIndex, 0), Self.headTiltSequence.count - 1)
+                let dur = Self.headTiltSequence[idx].duration
+                let next = elapsed + dt
+                if next >= dur {
+                    let nextIdx = idx + 1
+                    if nextIdx < Self.headTiltSequence.count {
+                        if nextIdx == 10 {
+                            squashSpring.impulse(0.9) // Cute micro-perk on hero -36° tilt!
+                        }
+                        state = .topStory(step: .headTilt(stepIndex: nextIdx, elapsed: 0))
+                    } else {
+                        topBarEffectTimer = 0
+                        state = .sitCalm(remaining: 60.0)
+                    }
+                } else {
+                    state = .topStory(step: .headTilt(stepIndex: idx, elapsed: next))
+                }
+
+            case .bellyRoll(let phase, let sideSign):
+                currentWalkSpeed = 0
+                switch phase {
+                case .flopDown(let elapsed, let duration):
+                    facingDirection = sideSign
+                    let next = elapsed + dt
+                    if next >= duration {
+                        squashSpring.impulse(-1.2)
+                        state = .topStory(step: .bellyRoll(
+                            phase: .waitingBellyUp(idleElapsed: 0, timeout: Self.bellyRollIdleTimeout, wiggleElapsed: 0),
+                            sideSign: sideSign
+                        ))
+                    } else {
+                        state = .topStory(step: .bellyRoll(
+                            phase: .flopDown(elapsed: next, duration: duration),
+                            sideSign: sideSign
+                        ))
+                    }
+
+                case .waitingBellyUp(let idleElapsed, let timeout, let wiggleElapsed):
+                    facingDirection = sideSign
+                    let nextIdle = idleElapsed + dt
+                    let nextWiggle = wiggleElapsed + dt
+                    if nextIdle >= timeout {
+                        // 10 seconds with no click -> roll back upright and end this interactive effect!
+                        state = .topStory(step: .bellyRoll(
+                            phase: .standingUp(elapsed: 0, duration: 0.28),
+                            sideSign: sideSign
+                        ))
+                    } else {
+                        state = .topStory(step: .bellyRoll(
+                            phase: .waitingBellyUp(idleElapsed: nextIdle, timeout: timeout, wiggleElapsed: nextWiggle),
+                            sideSign: sideSign
+                        ))
+                    }
+
+                case .rollingOver(let elapsed, let duration, let fromSide, let toSide, let startX, let targetX):
+                    let next = elapsed + dt
+                    let u = min(1.0, CGFloat(next / max(duration, 0.01)))
+                    let liveX = top.clampedX(startX + (targetX - startX) * Self.easeInOutCubic(u), margin: 22)
+                    position.x = liveX
+                    offsetFromWindowMinX = liveX - top.windowMinX
+                    // Flip facing right at the supine apex midpoint (u == 0.45)
+                    facingDirection = (u < 0.45) ? fromSide : toSide
+                    if next >= duration {
+                        facingDirection = toSide
+                        squashSpring.impulse(-1.4)
+                        state = .topStory(step: .bellyRoll(
+                            phase: .waitingBellyUp(idleElapsed: 0, timeout: Self.bellyRollIdleTimeout, wiggleElapsed: 0),
+                            sideSign: toSide
+                        ))
+                    } else {
+                        state = .topStory(step: .bellyRoll(
+                            phase: .rollingOver(
+                                elapsed: next,
+                                duration: duration,
+                                fromSide: fromSide,
+                                toSide: toSide,
+                                startX: startX,
+                                targetX: targetX
+                            ),
+                            sideSign: toSide
+                        ))
+                    }
+
+                case .standingUp(let elapsed, let duration):
+                    facingDirection = sideSign
+                    let next = elapsed + dt
+                    if next >= duration {
+                        facingDirection = 1.0
+                        topBarEffectTimer = 0
+                        squashSpring.impulse(1.0)
+                        state = .sitCalm(remaining: 60.0)
+                    } else {
+                        state = .topStory(step: .bellyRoll(
+                            phase: .standingUp(elapsed: next, duration: duration),
+                            sideSign: sideSign
                         ))
                     }
                 }
@@ -1730,23 +2210,13 @@ public final class CompanionController {
             case .smileSit(let elapsed, let duration):
                 currentWalkSpeed = 0
                 facingDirection = 1.0
-                // If owner hovers gently while Westie smiles at them, extend cozy smile a bit or happily loaf
                 let next = elapsed + dt
                 if next >= duration {
-                    // Quiet 2.6s stillness pause before yawning ("hmm, owner is busy...")
-                    state = .topStory(step: .preYawnWait(elapsed: 0, duration: 2.6))
+                    // Independent effect complete -> settle calmly sitting on top bar (yawn/sleep is its own effect!)
+                    topBarEffectTimer = 0
+                    state = .sitCalm(remaining: 24.0)
                 } else {
                     state = .topStory(step: .smileSit(elapsed: next, duration: duration))
-                }
-
-            case .preYawnWait(let elapsed, let duration):
-                currentWalkSpeed = 0
-                facingDirection = 1.0
-                let next = elapsed + dt
-                if next >= duration {
-                    state = .yawning(elapsed: 0, duration: 1.85)
-                } else {
-                    state = .topStory(step: .preYawnWait(elapsed: next, duration: duration))
                 }
             }
 
@@ -1811,14 +2281,62 @@ public final class CompanionController {
              .loafing(let remaining),
              .chinRest(let remaining),
              .sleeping(let remaining):
+            // Periodic independent Top-Bar Effect scheduler (while awake & resting on `windowTop`)
+            let isRestingAwakeOnTop: Bool = {
+                if case .sleeping = state { return false }
+                return perchZone == .windowTop && pendingWindowSwitch == nil
+            }()
+            if isRestingAwakeOnTop,
+               preferences.topEffectsEnabled,
+               !context.forceQuietSleep,
+               !context.isMeetingActive,
+               !isHoveringDog,
+               !isPointerDownOnDog
+            {
+                topBarEffectTimer += dt
+                let isTypingPaused = preferences.typingPauseEnabled && snapshot.secondsSinceLastKeyDown < 2.5
+                if !isTypingPaused,
+                   topBarEffectTimer >= preferences.topEffectIntervalSeconds,
+                   let top = layout.topPerch
+                {
+                    topBarEffectTimer = 0
+                    let pool = preferences.orderedEnabledTopEffects
+                    let candidates = (pool.count > 1 && lastAutoTopEffect != nil)
+                        ? pool.filter { $0 != lastAutoTopEffect }
+                        : pool
+                    let chosen = candidates.randomElement() ?? pool[0]
+                    if case .chinRest = state {
+                        facingDirection = -1.0
+                        state = .topStory(step: .risingToFullBody(elapsed: 0, duration: 0.62, nextEffect: chosen))
+                    } else {
+                        startTopBarEffect(chosen, on: top)
+                    }
+                    return
+                }
+            }
+
             let next = remaining - dt
             if next <= 0 {
-                if perchZone == .windowTop, let top = layout.topPerch {
-                    state = WestieBehaviorPlanner.chooseNextTopBehavior(
-                        currentX: position.x,
-                        platform: top,
-                        context: context
-                    )
+                if perchZone == .windowTop {
+                    if context.forceQuietSleep || context.isMeetingActive {
+                        state = .sleeping(remaining: 24.0)
+                    } else if context.shouldOfferTennisBreak {
+                        state = .holdingTennisBall(remaining: 22.0)
+                    } else if case .sleeping = state {
+                        // Wake gently from nap into calm open-eye loafing so periodic effects can resume!
+                        topBarEffectTimer = 0
+                        state = .loafing(remaining: 60.0)
+                    } else {
+                        // Stay calm in current resting pose (`chinRest`, `sitCalm`, `loafing`, `idle`)
+                        // until the user taps or `topEffectIntervalSeconds` triggers an independent effect!
+                        switch state {
+                        case .idle: state = .idle(remaining: 60.0)
+                        case .sitCalm: state = .sitCalm(remaining: 60.0)
+                        case .loafing: state = .loafing(remaining: 60.0)
+                        case .chinRest: state = .chinRest(remaining: 60.0)
+                        default: break
+                        }
+                    }
                 } else {
                     state = .peekingRight(remaining: 22.0)
                 }
@@ -1855,10 +2373,11 @@ public final class CompanionController {
             {
                 rightPeekDwellTimer = 0
                 let targetX = top.clampedX(top.maxX - min(110, top.width * 0.26), margin: 22)
+                // Default climb-to-top: simple peek left & right, then rest head-on-ledge facing forward!
                 beginStealthClimbToTop(
                     targetX: targetX,
                     windowID: layout.activeWindowID ?? trackedWindowID,
-                    climbToGreet: true
+                    effectOnArrival: nil
                 )
                 return
             }
@@ -2000,8 +2519,23 @@ public final class CompanionController {
 
     // MARK: - Smooth Cross-Fade & Organic Easing Helpers
 
-    /// Smoothly cross-fades `dogSprite` to `nextKey` (for current `preferences.petSpecies`) using `fadeOutSprite`,
-    /// eliminating 1-frame texture pops!
+    private func spawnBellyRubSparkle() {
+        let k = scaleFactor
+        let sparkle = SKLabelNode(text: "💕")
+        sparkle.fontSize = 14 * max(0.85, k * 0.85)
+        sparkle.position = CGPoint(x: position.x, y: position.y + 42 * k)
+        sparkle.zPosition = 9
+        rootNode.addChild(sparkle)
+        let rise = SKAction.moveBy(x: CGFloat.random(in: -10...10) * k, y: 24 * k, duration: 0.55)
+        rise.timingMode = .easeOut
+        sparkle.run(.sequence([
+            .group([rise, .fadeOut(withDuration: 0.55)]),
+            .removeFromParent()
+        ]))
+    }
+
+    /// Smoothly cross-fades `dogSprite` to `nextKey` (for current `preferences.petSpecies`) using `fadeOutSprite`.
+    /// Only reassigns GPU texture when `nextKey` or `species` actually changes (zero per-frame texture churn!).
     private func applySpriteTexture(
         _ nextKey: SpriteAssetKey,
         size: CGSize,
@@ -2010,7 +2544,14 @@ public final class CompanionController {
     ) {
         let species = preferences.petSpecies
         let speciesChanged = (displayedSpriteSpecies != species)
-        if displayedSpriteKey != nextKey || speciesChanged {
+        if speciesChanged {
+            // Defer background CGImage decode off-main-thread AFTER the current SpriteKit frame finishes!
+            DispatchQueue.main.async {
+                SpriteBank.shared.preloadSpecies(species)
+            }
+        }
+        let needsSwap = (displayedSpriteKey != nextKey || speciesChanged || dogSprite.texture == nil)
+        if needsSwap {
             if !speciesChanged && crossfadeDuration > 0.01 && !dogSprite.isHidden && dogSprite.texture != nil {
                 fadeOutSprite.texture = dogSprite.texture
                 fadeOutSprite.size = dogSprite.size
@@ -2028,9 +2569,11 @@ public final class CompanionController {
             }
             displayedSpriteKey = nextKey
             displayedSpriteSpecies = species
+            dogSprite.texture = bank.texture(for: nextKey, species: species)
         }
-        dogSprite.texture = bank.texture(for: nextKey, species: species)
-        dogSprite.size = size
+        if dogSprite.size != size {
+            dogSprite.size = size
+        }
     }
 
     private func clearCrossfade() {
@@ -2053,11 +2596,11 @@ public final class CompanionController {
             return
         }
         let u = CGFloat(poseCrossfadeElapsed / poseCrossfadeDuration)
-        // Smooth S-curve dissolve; keep outgoing sprite anchored to live window position while fading
-        let eased = Self.easeInOutCubic(u)
+        // Opaque-backing dissolve: keep outgoing sprite at alpha=1.0 while incoming ramps 0->1 over first 75%,
+        // then fade outgoing 1->0 over final 25% so combined opacity stays >= 94% (ZERO white background flash!).
         fadeOutSprite.position = dogSprite.position
-        fadeOutSprite.alpha = 1.0 - eased
-        dogSprite.alpha = eased
+        dogSprite.alpha = min(1.0, Self.easeInOutCubic(min(1.0, u / 0.75)))
+        fadeOutSprite.alpha = (u < 0.75) ? 1.0 : max(0.0, 1.0 - (u - 0.75) / 0.25)
     }
 
     /// Bell-curve smooth head tilt pulse around `center` with half-width `radius` (returns 0 outside window).
@@ -2114,18 +2657,25 @@ public final class CompanionController {
             shadowNode.isHidden = true
 
         case .windowTop:
-            // Mask y >= position.y so Westie cleanly emerges from / sinks behind the window title bar!
-            cropMaskNode.anchorPoint = CGPoint(x: 0.5, y: 0.0)
-            cropMaskNode.position = CGPoint(x: position.x, y: position.y)
-            cropNode.maskNode = cropMaskNode
-            dogSprite.anchorPoint = CGPoint(x: 0.5, y: 0.04)
-            let targetSize = topSize ?? topDogSize
-            applySpriteTexture(topTextureKey, size: targetSize, crossfadeDuration: crossfadeDuration, bank: bank)
-            let sinkY = f * (targetSize.height + 4.0)
             // Keep top-peek left/right un-mirrored so Left literally looks left and Right literally looks right!
             let isDirectionalPeek = (topTextureKey == .westieTopPeekCenter
                 || topTextureKey == .westieTopPeekLeft
                 || topTextureKey == .westieTopPeekRight)
+            // Only apply bottom stencil mask while actively sliding behind/out from the title bar;
+            // once emerged (`f <= 0.005`), release the mask so hanging paws drape naturally over the window edge!
+            if f > 0.005 {
+                cropMaskNode.anchorPoint = CGPoint(x: 0.5, y: 0.0)
+                cropMaskNode.position = CGPoint(x: position.x, y: position.y)
+                cropNode.maskNode = cropMaskNode
+            } else {
+                cropNode.maskNode = nil
+            }
+            // Top-peek sprites have paws hanging ~5px below the flat chin/shoulder ledge line (`y = 0.088`),
+            // anchoring at `0.088` seats the chin & shoulders 100% flush onto the window top edge with ZERO gap!
+            dogSprite.anchorPoint = CGPoint(x: 0.5, y: isDirectionalPeek ? 0.088 : 0.04)
+            let targetSize = topSize ?? topDogSize
+            applySpriteTexture(topTextureKey, size: targetSize, crossfadeDuration: 0, bank: bank)
+            let sinkY = f * (targetSize.height + 4.0)
             dogSprite.xScale = isDirectionalPeek ? 1.0 : (facingDirection >= 0 ? 1.0 : -1.0)
             dogSprite.yScale = 1.0
             dogSprite.position = CGPoint(x: position.x, y: position.y - sinkY)
@@ -2436,7 +2986,7 @@ public final class CompanionController {
 
         let desiredKey: SpriteAssetKey
         var desiredSize: CGSize = topDogSize
-        var fadeDur: TimeInterval = 0.24
+        var fadeDur: TimeInterval = 0
 
         if case .walking = state, currentWalkSpeed < 5.0 {
             desiredKey = .westieIdle // Stay calmly standing on hover — never flash to sitting sprite!
@@ -2444,9 +2994,32 @@ public final class CompanionController {
             switch state {
             case .topStory(let step):
                 switch step {
+                case .risingToFullBody(let elapsed, let duration, let nextEffect):
+                    // Smoothly pull body up from resting head-on-ledge (`westieTopPeekCenter`) onto all four paws!
+                    let u = CGFloat(elapsed / max(duration, 0.01))
+                    if u < 0.20 {
+                        desiredKey = .westieTopPeekCenter
+                        desiredSize = topPeekDogSize
+                        let dip = sin((u / 0.20) * .pi) * 0.08
+                        breathYScale = 1.0 - dip
+                        breathXScale = 1.0 + dip * 0.45
+                    } else if u < 0.72 {
+                        let climbU = (u - 0.20) / 0.52
+                        desiredKey = .westieClimbUp
+                        desiredSize = topDogSize
+                        bobY += sin(climbU * .pi) * 5.0
+                        facingDirection = (nextEffect == .patrol) ? -1.0 : 1.0
+                    } else {
+                        let landU = (u - 0.72) / 0.28
+                        desiredKey = .westieIdle
+                        desiredSize = topDogSize
+                        let settle = sin(landU * .pi) * 0.05
+                        breathYScale = 1.0 - settle
+                        breathXScale = 1.0 + settle * 0.4
+                    }
+
                 case .postClimbPause, .postWalkPause:
                     desiredKey = .westieIdle
-                    fadeDur = 0.18
                     let br = sin(breathPhase * 0.9) * 0.014
                     breathYScale = 1.0 + br
                     breathXScale = 1.0 - br * 0.5
@@ -2454,13 +3027,8 @@ public final class CompanionController {
                 case .hopLeft(_, let hopElapsed, let hopDuration, _, _, _):
                     if hopElapsed < hopDuration {
                         let u = CGFloat(hopElapsed / max(hopDuration, 0.01))
-                        // Dedicated 3-frame playful puppy bound cycle (mirrored LEFT via dirSign = -1):
-                        // 0.00..0.18: anticipation crouch on ground (`westieHopCrouch`)
-                        // 0.18..0.76: true airborne puppy leap (`westieHopAir`, smooth 13pt parabolic arc!)
-                        // 0.76..1.00: front-paw cushioned landing (`westieHopLand`)
                         if u < 0.18 {
                             desiredKey = .westieHopCrouch
-                            fadeDur = 0.06
                             let dip = sin((u / 0.18) * .pi) * 0.06
                             breathYScale = 1.0 - dip
                             breathXScale = 1.0 + dip * 0.45
@@ -2468,7 +3036,6 @@ public final class CompanionController {
                             let airU = (u - 0.18) / 0.58
                             bobY += sin(airU * .pi) * 13.0
                             desiredKey = .westieHopAir
-                            fadeDur = 0.05
                             strideTilt = cos(airU * .pi) * -0.07
                             let stretch = sin(airU * .pi) * 0.05
                             breathYScale = 1.0 + stretch
@@ -2476,24 +3043,15 @@ public final class CompanionController {
                         } else {
                             let landU = (u - 0.76) / 0.24
                             desiredKey = .westieHopLand
-                            fadeDur = 0.06
                             let cushion = sin(landU * .pi) * 0.05
                             breathYScale = 1.0 - cushion
                             breathXScale = 1.0 + cushion * 0.4
                         }
                     } else {
-                        // Brief grounded beat between bouncy hops
                         desiredKey = .westieHopCrouch
-                        fadeDur = 0.08
                     }
 
                 case .lookAroundPause(let elapsed, _):
-                    // Stationary body facing LEFT (`xScale = +1.0` unmirrored!); ONLY the head turns:
-                    // 0.00..0.35s: settle looking left
-                    // 0.35..0.50s -> 0.50..1.35s: peek RIGHT first (over shoulder!)
-                    // 1.35..1.50s -> 1.50..2.35s: peek LEFT!
-                    // 2.35..2.50s -> 2.50..3.50s: peek RIGHT again before strolling right!
-                    fadeDur = 0.14
                     if elapsed < 0.35 {
                         desiredKey = .westieLookLeftHeadLeft
                     } else if elapsed < 0.50 {
@@ -2515,8 +3073,7 @@ public final class CompanionController {
 
                 case .walkRight:
                     if currentWalkSpeed < 5.0 {
-                        desiredKey = .westieIdle // Calm pause in place on hover — no jarring sprite swap!
-                        fadeDur = 0.16
+                        desiredKey = .westieIdle
                     } else {
                         let speedRatio = max(0.35, Double(currentWalkSpeed / 44.0))
                         walkAnimTimer += dt * speedRatio
@@ -2525,71 +3082,159 @@ public final class CompanionController {
                             walkFrameIndex = (walkFrameIndex + 1) % Self.walkCycleFrames.count
                         }
                         desiredKey = Self.walkCycleFrames[walkFrameIndex]
-                        fadeDur = 0
                         let isPassingFrame = (walkFrameIndex == 1 || walkFrameIndex == 3)
                         let speedFactor = min(1.0, currentWalkSpeed / 44.0)
                         bobY += (isPassingFrame ? 1.6 : 0.0) * speedFactor
                         strideTilt = sin(breathPhase * 2.6) * 0.020 * speedFactor
                     }
 
-                case .flashStep(_, let beat):
-                    // Viral upright bipedal "闪身步" dance: crisp pose beats + snappy hop-dash sidesteps!
-                    fadeDur = 0.07
+                case .flashStep(_, _, _, let beat):
+                    // Authentic 8-frame "闪身步": crisp hard cuts (fadeDur = 0), wide 192x128 aspect ratio (99x66*k),
+                    // ZERO upward hop — drops slightly DOWN (-5% H) in the split and glides dead-flat!
+                    desiredSize = flashStepDogSize
+                    fadeDur = 0
+                    let h = topDogSize.height
                     switch beat {
-                    case .stance(let elapsed, let duration):
-                        desiredKey = .westieFlashStep1
-                        let u = CGFloat(elapsed / max(duration, 0.01))
-                        let coil = Self.smoothTiltPulse(t: u, center: 0.72, radius: 0.30, amplitude: 0.06)
-                        breathYScale = 1.0 - coil
-                        breathXScale = 1.0 + coil * 0.45
-
-                    case .dodgeRight(let elapsed, let duration, _, _):
+                    case .holdStart, .statueFreezeLeft, .statueFinish:
+                        desiredKey = .westieFlashStep1 // Stone-faced deadpan statue (zero bob or sway!)
+                    case .popLeft, .popRight:
                         desiredKey = .westieFlashStep2
-                        let dashU = min(1.0, CGFloat(elapsed / max(duration * 0.48, 0.01)))
-                        let hopY: CGFloat = sin(dashU * .pi) * 6.5 * scaleFactor
-                        bobY += hopY
-                        strideTilt = -sin(dashU * .pi) * 0.08
-
-                    case .stopMid(let elapsed, let duration), .finishStop(let elapsed, let duration):
+                        bobY -= 0.01 * h
+                    case .splitFeintLeft:
                         desiredKey = .westieFlashStep3
-                        let u = CGFloat(elapsed / max(duration, 0.01))
-                        let snap = Self.smoothTiltPulse(t: u, center: 0.22, radius: 0.22, amplitude: 0.05)
-                        breathYScale = 1.0 + snap
-                        breathXScale = 1.0 - snap * 0.35
-
-                    case .readyLeft(let elapsed, let duration):
+                        bobY -= 0.05 * h // Grounded low A-frame drop!
+                    case .glideWideLeft(let elapsed, let duration):
                         desiredKey = .westieFlashStep4
-                        let u = CGFloat(elapsed / max(duration, 0.01))
-                        let coil = Self.smoothTiltPulse(t: u, center: 0.72, radius: 0.30, amplitude: 0.06)
-                        breathYScale = 1.0 - coil
-                        breathXScale = 1.0 + coil * 0.45
-
-                    case .dodgeLeft(let elapsed, let duration, _, _):
+                        let u = min(1.0, CGFloat(elapsed / max(duration, 0.01)))
+                        bobY -= (0.05 - 0.04 * u) * h
+                    case .snapCloseLeft:
                         desiredKey = .westieFlashStep5
-                        let dashU = min(1.0, CGFloat(elapsed / max(duration * 0.48, 0.01)))
-                        let hopY: CGFloat = sin(dashU * .pi) * 6.5 * scaleFactor
-                        bobY += hopY
-                        strideTilt = sin(dashU * .pi) * 0.08
+                    case .splitFeintRight:
+                        desiredKey = .westieFlashStep6
+                        bobY -= 0.055 * h // Grounded low A-frame drop!
+                    case .glideWideRight(let elapsed, let duration):
+                        desiredKey = .westieFlashStep7
+                        let u = min(1.0, CGFloat(elapsed / max(duration, 0.01)))
+                        bobY -= (0.05 - 0.04 * u) * h
+                    case .snapCloseRight:
+                        desiredKey = .westieFlashStep8
+                    }
+
+                case .bearShake(_, _, let frameIndex, let elapsed):
+                    // Authentic 8-frame "狗熊哆嗦毛": 192x128 height-locked (99x66*k), crisp hard cuts!
+                    desiredSize = flashStepDogSize
+                    fadeDur = 0
+                    let idx = min(max(frameIndex, 0), Self.bearShakeFrames.count - 1)
+                    desiredKey = Self.bearShakeFrames[idx]
+                    let dur = Self.bearShakeDurations[idx]
+                    let u = min(1.0, CGFloat(elapsed / max(dur, 0.01)))
+                    let h = topDogSize.height
+                    switch idx {
+                    case 1: // Forehead X-cross squat dip
+                        bobY -= 0.035 * h
+                        let dip = sin(u * .pi) * 0.05
+                        breathYScale = 1.0 - dip
+                        breathXScale = 1.0 + dip * 0.45
+                    case 2: // Floppy wide T-pose wet-paw shake!
+                        bobY -= 0.02 * h
+                        strideTilt = sin(u * .pi * 4.0) * 0.032
+                    case 3, 7: // Quick seesaw step transition
+                        bobY += sin(u * .pi) * 0.035 * h
+                    case 6: // Signature diagonal '/' lean floppy T-pose shake!
+                        strideTilt = sin(u * .pi * 4.0) * 0.028
+                    default:
+                        break
+                    }
+
+                case .wandererKick(_, _, let frameIndex, let elapsed):
+                    // Authentic 6-frame "浪子踢球": 192x128 height-locked (99x66*k), crisp folk-dance snap!
+                    desiredSize = flashStepDogSize
+                    fadeDur = 0
+                    let idx = min(max(frameIndex, 0), Self.wandererKickFrames.count - 1)
+                    desiredKey = Self.wandererKickFrames[idx]
+                    let dur = Self.wandererKickDurations[idx]
+                    let u = min(1.0, CGFloat(elapsed / max(dur, 0.01)))
+                    let h = topDogSize.height
+                    switch idx {
+                    case 1: // Deep diagonal crouch
+                        bobY -= 0.025 * h
+                        breathYScale = 1.0 - sin(u * .pi) * 0.04
+                    case 3: // Whip kick burst!
+                        breathYScale = 1.0 + 0.05
+                        breathXScale = 1.0 - 0.03
+                    case 4: // Hero X-cross + W-arms showstopper hold!
+                        let proud = sin(u * .pi) * 0.025
+                        breathYScale = 1.0 + proud
+                        breathXScale = 1.0 - proud * 0.4
+                    default:
+                        break
+                    }
+
+                case .headTilt(let stepIndex, _):
+                    // Authentic 6-frame "歪头杀": stationary planted front paws, crisp zero-flash head tilts!
+                    let idx = min(max(stepIndex, 0), Self.headTiltSequence.count - 1)
+                    desiredKey = Self.headTiltSequence[idx].key
+                    desiredSize = topDogSize
+                    fadeDur = 0
+                    let br = sin(breathPhase * 0.85) * 0.012
+                    breathYScale = 1.0 + br
+                    breathXScale = 1.0 - br * 0.45
+
+                case .bellyRoll(let phase, _):
+                    desiredSize = topDogSize
+                    fadeDur = 0
+                    switch phase {
+                    case .flopDown(let elapsed, let duration):
+                        desiredKey = .westieBellyRoll1
+                        let u = CGFloat(elapsed / max(duration, 0.01))
+                        let dip = sin(u * .pi) * 0.05
+                        breathYScale = 1.0 - dip
+                        breathXScale = 1.0 + dip * 0.45
+
+                    case .waitingBellyUp(_, _, let wiggleElapsed):
+                        // Gently alternate belly-up waiting poses (~0.65s) with cute tummy-rub breathing!
+                        let wiggleIdx = Int(wiggleElapsed / 0.65) % 2
+                        desiredKey = (wiggleIdx == 0) ? .westieBellyRoll2 : .westieBellyRoll3
+                        let br = sin(breathPhase * 1.15) * 0.018
+                        breathYScale = 1.0 + br
+                        breathXScale = 1.0 - br * 0.45
+                        strideTilt = sin(breathPhase * 0.9) * 0.022
+
+                    case .rollingOver(let elapsed, let duration, _, _, _, _):
+                        // Smooth 4-stage roll across spine (exact `打滚.mp4` pose sequence!):
+                        //   0.00..0.22: tuck paws & tip back (`belly_roll_4`)
+                        //   0.22..0.52: supine apex paws kicking in air (`belly_roll_5`, unmirrored!)
+                        //   0.52..0.76: quarter-roll onto opposite side (`belly_roll_6`, mirrored!)
+                        //   0.76..1.00: settle joyfully with paws curled (`belly_roll_3`, mirrored!)
+                        let u = CGFloat(elapsed / max(duration, 0.01))
+                        if u < 0.22 {
+                            desiredKey = .westieBellyRoll4
+                        } else if u < 0.52 {
+                            desiredKey = .westieBellyRoll5
+                            bobY += sin(((u - 0.22) / 0.30) * .pi) * 2.5 * scaleFactor
+                        } else if u < 0.76 {
+                            desiredKey = .westieBellyRoll6
+                        } else {
+                            desiredKey = .westieBellyRoll3
+                        }
+
+                    case .standingUp(let elapsed, let duration):
+                        desiredKey = .westieBellyRoll1
+                        let u = CGFloat(elapsed / max(duration, 0.01))
+                        let push = sin(u * .pi) * 0.06
+                        breathYScale = 1.0 + push
+                        breathXScale = 1.0 - push * 0.4
                     }
 
                 case .smileSit(let elapsed, _):
                     // Smiling warmly at camera (`westieSitTilt`) with spaced, playful head sways + natural pauses!
                     desiredKey = .westieSitTilt
-                    fadeDur = 0.26
+                    fadeDur = 0
                     let t = CGFloat(elapsed)
-                    // Beat 1 (0.7..1.6s): tilt left +6.5° -> calm pause -> Beat 2 (2.2..3.1s): tilt right -6.5° -> Beat 3 (3.5..4.2s): tiny tilt left +4°
-                    strideTilt = Self.smoothTiltPulse(t: t, center: 1.15, radius: 0.48, amplitude: 0.115)
-                        - Self.smoothTiltPulse(t: t, center: 2.65, radius: 0.48, amplitude: 0.115)
-                        + Self.smoothTiltPulse(t: t, center: 3.85, radius: 0.38, amplitude: 0.070)
+                    strideTilt = Self.smoothTiltPulse(t: t, center: 1.05, radius: 0.48, amplitude: 0.115)
+                        - Self.smoothTiltPulse(t: t, center: 2.45, radius: 0.48, amplitude: 0.115)
+                        + Self.smoothTiltPulse(t: t, center: 3.55, radius: 0.38, amplitude: 0.070)
                     let br = sin(breathPhase * 0.85) * 0.016
-                    breathYScale = 1.0 + br
-                    breathXScale = 1.0 - br * 0.5
-
-                case .preYawnWait:
-                    // Quiet 2.6s stillness sitting calmly before getting sleepy and yawning
-                    desiredKey = .westieSitTilt
-                    fadeDur = 0.24
-                    let br = sin(breathPhase * 0.65) * 0.015
                     breathYScale = 1.0 + br
                     breathXScale = 1.0 - br * 0.5
                 }
@@ -2597,7 +3242,7 @@ public final class CompanionController {
             case .yawning(let elapsed, let duration):
                 desiredKey = .westieYawn
                 desiredSize = yawnDogSize // Match real head/body scale to walk/sit/loaf frames (54pt vs 66pt)
-                fadeDur = 0.26
+                fadeDur = 0
                 let u = CGFloat(elapsed / max(duration, 0.01))
                 // Subtle sleepy yawn stretch (+4.5% inhale -> -4% exhale)
                 let yawnStretch = Self.smoothTiltPulse(t: u, center: 0.46, radius: 0.44, amplitude: 0.045)
@@ -2611,10 +3256,10 @@ public final class CompanionController {
                 // 2) Heavy half-closed sleepy eyelids (`westieDrowsy`) -> then dissolves seamlessly into `westieSleep`!
                 if elapsed < duration * 0.48 {
                     desiredKey = .westieLoafCalm
-                    fadeDur = 0.30
+                    fadeDur = 0
                 } else {
                     desiredKey = .westieDrowsy
-                    fadeDur = 0.38
+                    fadeDur = 0.28
                 }
                 let br = sin(breathPhase * 0.65) * 0.016
                 breathYScale = 1.0 + br
@@ -2660,22 +3305,23 @@ public final class CompanionController {
 
             case .loafing:
                 desiredKey = .westieLoafCalm
-                fadeDur = (displayedSpriteKey == .westieSleep) ? 0.36 : 0.26
+                fadeDur = (displayedSpriteKey == .westieSleep) ? 0.30 : 0
                 let br = sin(breathPhase * 0.72) * 0.015
                 breathYScale = 1.0 + br
                 breathXScale = 1.0 - br * 0.5
 
             case .chinRest:
-                desiredKey = .westieChinLedge
-                desiredSize = chinLedgeDogSize // Head scale matched 1:1 with full-body poses!
+                // Exact same sprite & size as the end of `tentativePeek` -> ZERO jump after left/right glance!
+                desiredKey = .westieTopPeekCenter
+                desiredSize = topPeekDogSize
                 let br = sin(breathPhase * 0.75) * 0.014
                 breathYScale = 1.0 + br
                 breathXScale = 1.0 - br * 0.5
 
             case .sleeping:
                 desiredKey = .westieSleep
-                // Identical silhouette to `westieDrowsy` / `westieLoafCalm` -> 0.44s dissolve looks like eyes smoothly closing!
-                fadeDur = (displayedSpriteKey == .westieDrowsy || displayedSpriteKey == .westieLoafCalm) ? 0.44 : 0.32
+                // Identical silhouette to `westieDrowsy` / `westieLoafCalm` -> opaque-backing dissolve!
+                fadeDur = (displayedSpriteKey == .westieDrowsy || displayedSpriteKey == .westieLoafCalm) ? 0.36 : 0
                 let br = sin(breathPhase * 0.52) * 0.018
                 breathYScale = 1.0 + br
                 breathXScale = 1.0 - br * 0.5
@@ -2707,7 +3353,7 @@ public final class CompanionController {
                 // Happy 2-frame munching cycle (`eat_1` crunch <-> `eat_2` blissful ^ ^ chew) + tactile head bob!
                 let chewIdx = Int(elapsed / 0.28) % 2
                 desiredKey = (chewIdx == 0) ? .westieEat1 : .westieEat2
-                fadeDur = 0.05
+                fadeDur = 0
                 let chewPhase = CGFloat((elapsed / 0.28).truncatingRemainder(dividingBy: 1.0))
                 let munchSquash = sin(chewPhase * .pi) * 0.055
                 breathYScale = 1.0 - munchSquash
@@ -2719,6 +3365,13 @@ public final class CompanionController {
             }
         }
 
+        // Anchor `westieTopPeek*` at `0.088` so the flat chin & shoulders rest 100% flush on the window top border
+        // while the two rounded front paws hang naturally over the ledge with ZERO gap!
+        let isTopPeekPose = (desiredKey == .westieTopPeekCenter
+            || desiredKey == .westieTopPeekLeft
+            || desiredKey == .westieTopPeekRight)
+        dogSprite.anchorPoint = CGPoint(x: 0.5, y: isTopPeekPose ? 0.088 : 0.04)
+
         applySpriteTexture(desiredKey, size: desiredSize, crossfadeDuration: fadeDur, bank: bank)
 
         if state != .walking(direction: facingDirection, remaining: 0) {
@@ -2727,15 +3380,34 @@ public final class CompanionController {
             }
         }
 
-        // Stationary-body look-around & front-facing Flash-Step sprites have explicit left/right orientation -> do NOT mirror!
-        let isUnmirroredSprite = (desiredKey == .westieLookLeftHeadLeft
+        // Stationary-body look-around, top-ledge peek, & front-facing symmetric dance sprites -> do NOT mirror!
+        let isUnmirroredSprite = (desiredKey == .westieTopPeekCenter
+            || desiredKey == .westieLookLeftHeadLeft
             || desiredKey == .westieLookLeftHeadCenter
             || desiredKey == .westieLookLeftHeadRight
             || desiredKey == .westieFlashStep1
             || desiredKey == .westieFlashStep2
             || desiredKey == .westieFlashStep3
             || desiredKey == .westieFlashStep4
-            || desiredKey == .westieFlashStep5)
+            || desiredKey == .westieFlashStep5
+            || desiredKey == .westieFlashStep6
+            || desiredKey == .westieFlashStep7
+            || desiredKey == .westieFlashStep8
+            || desiredKey == .westieBearShake1
+            || desiredKey == .westieBearShake2
+            || desiredKey == .westieBearShake3
+            || desiredKey == .westieBearShake4
+            || desiredKey == .westieBearShake5
+            || desiredKey == .westieBearShake6
+            || desiredKey == .westieBearShake7
+            || desiredKey == .westieBearShake8
+            || desiredKey == .westieHeadTilt1
+            || desiredKey == .westieHeadTilt2
+            || desiredKey == .westieHeadTilt3
+            || desiredKey == .westieHeadTilt4
+            || desiredKey == .westieHeadTilt5
+            || desiredKey == .westieHeadTilt6
+            || desiredKey == .westieBellyRoll5)
         let effectiveDirSign: CGFloat = isUnmirroredSprite ? 1.0 : dirSign
 
         dogSprite.position = CGPoint(x: position.x, y: position.y + bobY)

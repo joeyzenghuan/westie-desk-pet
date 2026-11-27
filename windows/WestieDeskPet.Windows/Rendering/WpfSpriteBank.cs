@@ -20,6 +20,12 @@ public sealed class WpfSpriteBank
         _spritesDir = Path.Combine(AppContext.BaseDirectory, "Sprites");
     }
 
+    public void PreloadSpecies(PetSpecies species)
+    {
+        foreach (var key in SpriteAssetCatalog.AllKeys)
+            _ = GetImage(key, species);
+    }
+
     public BitmapImage? GetImage(SpriteAssetKey key, PetSpecies species)
     {
         string name = SpriteAssetCatalog.GetResourceName(key, species);

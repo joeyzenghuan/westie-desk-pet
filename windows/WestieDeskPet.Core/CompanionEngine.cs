@@ -83,6 +83,42 @@ public sealed class CompanionEngine
         SpriteAssetKey.WestieWalk4
     ];
 
+    private static readonly SpriteAssetKey[] BearShakeFrames =
+    [
+        SpriteAssetKey.WestieBearShake1, SpriteAssetKey.WestieBearShake2,
+        SpriteAssetKey.WestieBearShake3, SpriteAssetKey.WestieBearShake4,
+        SpriteAssetKey.WestieBearShake5, SpriteAssetKey.WestieBearShake6,
+        SpriteAssetKey.WestieBearShake7, SpriteAssetKey.WestieBearShake8
+    ];
+    private static readonly double[] BearShakeDurations = [0.16, 0.15, 0.24, 0.16, 0.18, 0.14, 0.24, 0.15];
+    private static readonly double[] BearShakeOffsets = [7.0, 9.0, 10.0, 0.0, -9.0, -10.0, -8.0, 1.0];
+
+    private static readonly SpriteAssetKey[] WandererKickFrames =
+    [
+        SpriteAssetKey.WestieWandererKick1, SpriteAssetKey.WestieWandererKick2,
+        SpriteAssetKey.WestieWandererKick3, SpriteAssetKey.WestieWandererKick4,
+        SpriteAssetKey.WestieWandererKick5, SpriteAssetKey.WestieWandererKick6
+    ];
+    private static readonly double[] WandererKickDurations = [0.24, 0.30, 0.48, 0.10, 0.74, 0.24];
+
+    private const double BellyRollIdleTimeout = 10.0;
+
+    private static readonly (SpriteAssetKey Key, double Duration)[] HeadTiltSequence =
+    [
+        (SpriteAssetKey.WestieHeadTilt1, 0.36),
+        (SpriteAssetKey.WestieHeadTilt3, 0.42),
+        (SpriteAssetKey.WestieHeadTilt2, 0.09),
+        (SpriteAssetKey.WestieHeadTilt4, 0.38),
+        (SpriteAssetKey.WestieHeadTilt2, 0.34),
+        (SpriteAssetKey.WestieHeadTilt3, 0.42),
+        (SpriteAssetKey.WestieHeadTilt2, 0.08),
+        (SpriteAssetKey.WestieHeadTilt4, 0.18),
+        (SpriteAssetKey.WestieHeadTilt5, 0.36),
+        (SpriteAssetKey.WestieHeadTilt2, 0.07),
+        (SpriteAssetKey.WestieHeadTilt6, 0.72),
+        (SpriteAssetKey.WestieHeadTilt2, 0.28)
+    ];
+
     private readonly Random _rng = new();
     private readonly int _ownPid;
 
@@ -102,6 +138,9 @@ public sealed class CompanionEngine
     public bool IsPointerDownOnDog { get; private set; }
     public double ShyRetreatTimer { get; private set; }
     public double RightPeekDwellTimer { get; private set; }
+    public double TopBarEffectTimer { get; private set; }
+    private TopBarEffect? _lastAutoTopEffect;
+    private TopBarEffect _pendingRiseEffect = TopBarEffect.Patrol;
 
     public bool ForceQuietSleep
     {
@@ -177,8 +216,21 @@ public sealed class CompanionEngine
     private double _hopStartX;
     private double _hopTargetX;
     private int _flashRoundsRemaining;
-    private double _flashStartX;
-    private double _flashTargetX;
+    private double _flashOriginX;
+    private double _flashTravelDist;
+    private int _effectCyclesRemaining;
+    private double _effectOriginX;
+    private int _effectFrameIndex;
+    private double _effectMirrorSign = 1.0;
+    private BellyRollPhaseKind _bellyRollPhase;
+    private double _bellyRollSideSign = 1.0;
+    private double _bellyRollFromSide = 1.0;
+    private double _bellyRollWiggleElapsed;
+    private double _rollStartX;
+    private double _rollTargetX;
+
+    public BellyRollPhaseKind BellyRollPhase => _bellyRollPhase;
+    public double BellyRollSideSign => _bellyRollSideSign;
 
     // Stealth payload
     private PerchZone _stealthOriginZone = PerchZone.ScreenRightPeek;
@@ -208,9 +260,10 @@ public sealed class CompanionEngine
 
     private double ScaleFactor => Preferences.DogScale;
     private Size2D TopDogSize => new(66 * ScaleFactor, 66 * ScaleFactor);
+    private Size2D FlashStepDogSize => new(99 * ScaleFactor, 66 * ScaleFactor);
     private Size2D YawnDogSize => new(54 * ScaleFactor, 54 * ScaleFactor);
-    private Size2D ChinLedgeDogSize => new(54 * ScaleFactor, 54 * ScaleFactor);
-    private Size2D TopPeekDogSize => new(44 * ScaleFactor, 44 * ScaleFactor);
+    private Size2D ChinLedgeDogSize => new(48 * ScaleFactor, 48 * ScaleFactor);
+    private Size2D TopPeekDogSize => new(48 * ScaleFactor, 48 * ScaleFactor);
     private Size2D PeekDogSize => new(76 * ScaleFactor, 76 * ScaleFactor);
 
     public bool IsGrounded => StateKind is not (CompanionStateKind.Gliding or CompanionStateKind.Dragged
@@ -385,7 +438,7 @@ public sealed class CompanionEngine
                 if (layout.TopPerch is { } top)
                 {
                     double x = top.ClampedX(top.MinX + top.Width * 0.62, 22);
-                    BeginStealthClimbToTop(x, layout.ActiveWindowId ?? TrackedWindowId, climbToGreet: false);
+                    BeginStealthClimbToTop(x, layout.ActiveWindowId ?? TrackedWindowId, effectOnArrival: null);
                 }
                 break;
             case PerchZone.WindowRightPeek:
@@ -396,6 +449,152 @@ public sealed class CompanionEngine
                 break;
             case PerchZone.ScreenRightPeek:
                 EmergeIntoRightPeek(layout.ScreenRightPeek, layout.ScreenRightPeek.ClampedY(Position.Y), PerchZone.ScreenRightPeek, layout);
+                break;
+        }
+    }
+
+    /// <summary>Immediately plays an independent top-bar effect (climbs onto top bar first if currently on right bezel).</summary>
+    public void TriggerTopBarEffect(TopBarEffect effect, ActiveWorkspaceSnapshot snapshot, Size2D sceneSize)
+    {
+        var layout = snapshot.PerchLayout;
+        if (layout.TopPerch is not { } top) return;
+
+        PendingWindowSwitch = null;
+        RightPeekDwellTimer = 0;
+        TopBarEffectTimer = 0;
+        _hasTreatProp = false;
+        _forceQuietSleep = false;
+
+        if (PerchZone == PerchZone.WindowTop && TrackedWindowId == (layout.ActiveWindowId ?? TrackedWindowId) && IsGrounded)
+        {
+            CurrentPlatform = top;
+            if (StateKind == CompanionStateKind.ChinRest)
+            {
+                _facingDirection = -1.0;
+                _pendingRiseEffect = effect;
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.RisingToFullBody;
+                _stateElapsed = 0;
+                _stateDuration = 0.62;
+            }
+            else
+            {
+                StartTopBarEffect(effect, top);
+            }
+        }
+        else
+        {
+            double targetX = top.ClampedX(top.MaxX - Math.Min(110, top.Width * 0.26), 22);
+            BeginStealthClimbToTop(targetX, layout.ActiveWindowId ?? TrackedWindowId, effectOnArrival: effect);
+        }
+    }
+
+    private void StartTopBarEffect(TopBarEffect effect, WindowPlatform top)
+    {
+        TopBarEffectTimer = 0;
+        _lastAutoTopEffect = effect;
+        _greetingHoverAccumulator = 0;
+        _currentWalkSpeed = 0;
+
+        switch (effect)
+        {
+            case TopBarEffect.Patrol:
+                _facingDirection = -1.0;
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.PostClimbPause;
+                _stateElapsed = 0;
+                _stateDuration = 0.36;
+                break;
+
+            case TopBarEffect.FlashStep:
+                _facingDirection = 1.0;
+                double desiredDist = Math.Min(30.0 * ScaleFactor, Math.Max(14.0, top.Width * 0.08));
+                double safeOriginX = top.ClampedX(Math.Max(Position.X, top.MinX + desiredDist + 26.0), 26.0);
+                double travelDist = Math.Min(desiredDist, Math.Max(12.0, safeOriginX - (top.MinX + 24.0)));
+                Position = new Vec2(safeOriginX, top.Y);
+                _offsetFromWindowMinX = safeOriginX - top.WindowMinX;
+
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.FlashStep;
+                FlashStepBeat = FlashStepBeatKind.HoldStart;
+                _flashRoundsRemaining = 2;
+                _flashOriginX = safeOriginX;
+                _flashTravelDist = travelDist;
+                _stateElapsed = 0;
+                _stateDuration = 0.14;
+                break;
+
+            case TopBarEffect.BearShake:
+            {
+                _facingDirection = 1.0;
+                double marginX = Math.Max(28.0, 14.0 * ScaleFactor + 18.0);
+                double originX = top.ClampedX(Position.X, marginX);
+                Position = new Vec2(originX, top.Y);
+                _offsetFromWindowMinX = originX - top.WindowMinX;
+
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.BearShake;
+                _effectCyclesRemaining = 2;
+                _effectOriginX = originX;
+                _effectFrameIndex = 0;
+                _stateElapsed = 0;
+                _stateDuration = BearShakeDurations[0];
+                break;
+            }
+
+            case TopBarEffect.WandererKick:
+            {
+                _facingDirection = 1.0;
+                double safeX = top.ClampedX(Position.X, 26.0);
+                Position = new Vec2(safeX, top.Y);
+                _offsetFromWindowMinX = safeX - top.WindowMinX;
+
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.WandererKick;
+                _effectCyclesRemaining = 2;
+                _effectMirrorSign = 1.0;
+                _effectFrameIndex = 0;
+                _stateElapsed = 0;
+                _stateDuration = WandererKickDurations[0];
+                break;
+            }
+
+            case TopBarEffect.HeadTilt:
+            {
+                _facingDirection = 1.0;
+                double safeX = top.ClampedX(Position.X, 22.0);
+                Position = new Vec2(safeX, top.Y);
+                _offsetFromWindowMinX = safeX - top.WindowMinX;
+
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.HeadTilt;
+                _effectFrameIndex = 0;
+                _stateElapsed = 0;
+                _stateDuration = HeadTiltSequence[0].Duration;
+                break;
+            }
+
+            case TopBarEffect.WindowRoll:
+            {
+                _facingDirection = 1.0;
+                double safeX = top.ClampedX(Position.X, 26.0);
+                Position = new Vec2(safeX, top.Y);
+                _offsetFromWindowMinX = safeX - top.WindowMinX;
+
+                StateKind = CompanionStateKind.TopStory;
+                TopStoryStep = TopStoryStepKind.BellyRoll;
+                _bellyRollPhase = BellyRollPhaseKind.FlopDown;
+                _bellyRollSideSign = 1.0;
+                _bellyRollFromSide = 1.0;
+                _bellyRollWiggleElapsed = 0;
+                _stateElapsed = 0;
+                _stateDuration = 0.24;
+                break;
+            }
+
+            case TopBarEffect.YawnSleep:
+                _facingDirection = 1.0;
+                EnterTimedState(CompanionStateKind.Yawning, 1.85);
                 break;
         }
     }
@@ -604,6 +803,34 @@ public sealed class CompanionEngine
             return;
         }
 
+        // Interactive Belly-Up Roll-Over (`翻肚皮打滚`): clicking flips pet smoothly onto opposite side & resets 10s timer!
+        if (StateKind == CompanionStateKind.TopStory && TopStoryStep == TopStoryStepKind.BellyRoll)
+        {
+            if (_bellyRollPhase is BellyRollPhaseKind.WaitingBellyUp or BellyRollPhaseKind.FlopDown)
+            {
+                double nextSide = -_bellyRollSideSign;
+                double nudge = nextSide * 10.0 * ScaleFactor;
+                _bellyRollFromSide = _bellyRollSideSign;
+                _bellyRollSideSign = nextSide;
+                _rollStartX = Position.X;
+                _rollTargetX = CurrentPlatform is { } top ? top.ClampedX(Position.X + nudge, 24.0) : Position.X;
+                _bellyRollPhase = BellyRollPhaseKind.RollingOver;
+                _stateElapsed = 0;
+                _stateDuration = 0.56;
+                _squashSpring.Impulse(1.8);
+                _particles.Add(new SnackCrumbParticle(
+                    Position.X, Position.Y + 42 * ScaleFactor,
+                    (_rng.NextDouble() * 20 - 10) * ScaleFactor, 36 * ScaleFactor,
+                    14 * Math.Max(0.85, ScaleFactor * 0.85), "#FFFFFF", 0.55, "💕"));
+                return;
+            }
+            if (_bellyRollPhase == BellyRollPhaseKind.RollingOver)
+            {
+                _squashSpring.Impulse(1.2);
+                return;
+            }
+        }
+
         _greetingHoverAccumulator = 0;
         _currentWalkSpeed = 0;
 
@@ -709,7 +936,7 @@ public sealed class CompanionEngine
         double k = ScaleFactor;
         double mouthX = Position.X + (_facingDirection >= 0 ? 14.0 : -14.0) * k;
         double mouthY = Position.Y + 18.0 * k;
-        string color = Preferences.PetSpecies == PetSpecies.GoldenCat ? "#E0AB5C" : "#F5E8C7";
+        string color = Preferences.PetSpecies.IsCat() ? "#E0AB5C" : "#F5E8C7";
 
         int count = finalSparkle ? 5 : 3;
         for (int i = 0; i < count; i++)
@@ -723,7 +950,7 @@ public sealed class CompanionEngine
 
         if (finalSparkle)
         {
-            string txt = Preferences.PetSpecies == PetSpecies.GoldenCat ? "🐟✨" : "🦴✨";
+            string txt = Preferences.PetSpecies.IsCat() ? "🐟✨" : "🦴✨";
             _particles.Add(new SnackCrumbParticle(
                 Position.X, Position.Y + 52 * k, 0, 32 * k, 13 * Math.Max(0.9, k * 0.85), "#FFFFFF", 0.55, txt));
         }
@@ -820,7 +1047,7 @@ public sealed class CompanionEngine
                 }
                 else if (layout.TopPerch is { } t)
                 {
-                    BeginStealthClimbToTop(t.ClampedX(t.MinX + t.Width * 0.65, 20), layout.ActiveWindowId ?? TrackedWindowId, false);
+                    BeginStealthClimbToTop(t.ClampedX(t.MinX + t.Width * 0.65, 20), layout.ActiveWindowId ?? TrackedWindowId, effectOnArrival: null);
                 }
                 else
                 {
@@ -904,6 +1131,12 @@ public sealed class CompanionEngine
         ulong activeId = layout.ActiveWindowId ?? 0;
         if (PerchZone == PerchZone.ScreenRightPeek)
         {
+            if (StateKind == CompanionStateKind.TuckedWaiting)
+            {
+                EnterTimedState(CompanionStateKind.PeekingRight, 25.0);
+                _peekEmergeSpring.Value = -0.8;
+                _peekEmergeSpring.Target = 0;
+            }
             if (Preferences.PerchPreference == PerchPreference.Auto)
             {
                 if (activeId != 0 && activeId != TrackedWindowId)
@@ -936,6 +1169,13 @@ public sealed class CompanionEngine
             if (oldStillVisible && snapshot.GetPerchLayoutForWindow(TrackedWindowId) is { } oldLayout)
             {
                 AnchorPositionToWindowLayout(oldLayout, sceneSize);
+                if (PerchZone == PerchZone.ScreenRightPeek)
+                {
+                    PendingWindowSwitch = null;
+                    TrackedWindowId = activeId;
+                    RightPeekDwellTimer = 0;
+                    return;
+                }
                 if (StateKind != CompanionStateKind.TuckedWaiting)
                 {
                     bool occluded = PlatformPhysics.IsRectOccludedByFrontWindows(
@@ -1025,12 +1265,11 @@ public sealed class CompanionEngine
     public void BeginStealthClimbToTop(
         double targetX,
         ulong windowId,
-        bool climbToGreet,
-        TopClimbRoutine? routineOverride = null)
+        TopBarEffect? effectOnArrival = null)
     {
         bool alreadyTop = PerchZone == PerchZone.WindowTop;
         BeginStealthTransition(
-            new StealthDestination(PerchZone.WindowTop, TargetX: targetX, ClimbToGreet: climbToGreet, RoutineOverride: routineOverride),
+            new StealthDestination(PerchZone.WindowTop, TargetX: targetX, EffectOnArrival: effectOnArrival),
             windowId,
             skipRetract: alreadyTop,
             retractDuration: 0.62);
@@ -1106,7 +1345,8 @@ public sealed class CompanionEngine
         TrackedWindowId = platform.WindowId;
         _offsetFromWindowMinX = x - platform.WindowMinX;
         Position = new Vec2(x, platform.Y);
-        EnterTimedState(ForceQuietSleep ? CompanionStateKind.Sleeping : CompanionStateKind.Idle, ForceQuietSleep ? 25.0 : 4.5);
+        TopBarEffectTimer = 0;
+        EnterTimedState(ForceQuietSleep ? CompanionStateKind.Sleeping : CompanionStateKind.ChinRest, ForceQuietSleep ? 25.0 : 60.0);
     }
 
     private void SnapToWindowRightPeek(RightEdgeAnchor anchor, double windowMaxY, double? customY = null)
@@ -1152,41 +1392,22 @@ public sealed class CompanionEngine
                 if (destLayout.TopPerch is { } top)
                 {
                     LandOnWindowTop(top, _stealthDestination.TargetX);
-                    if (_stealthDestination.ClimbToGreet && !ForceQuietSleep && !snapshot.IsMeetingActive)
+                    TopBarEffectTimer = 0;
+                    if (_stealthDestination.EffectOnArrival is { } effect && !ForceQuietSleep && !snapshot.IsMeetingActive)
                     {
-                        _greetingPhase = 0;
-                        _greetingTotalDuration = Preferences.GreetingDurationSeconds;
-                        _didGreetingPerkHop = false;
-                        var baseRoutine = _stealthDestination.RoutineOverride ?? Preferences.TopClimbRoutine;
-                        var chosen = baseRoutine == TopClimbRoutine.Random
-                            ? (_rng.Next(2) == 0 ? TopClimbRoutine.FlashStep : TopClimbRoutine.ClassicStory)
-                            : baseRoutine;
-
-                        if (chosen == TopClimbRoutine.FlashStep)
-                        {
-                            _facingDirection = 1.0;
-                            StateKind = CompanionStateKind.TopStory;
-                            TopStoryStep = TopStoryStepKind.FlashStep;
-                            FlashStepBeat = FlashStepBeatKind.Stance;
-                            _flashRoundsRemaining = 2;
-                            _stateElapsed = 0;
-                            _stateDuration = 0.44;
-                        }
-                        else
-                        {
-                            _facingDirection = -1.0;
-                            StateKind = CompanionStateKind.TopStory;
-                            TopStoryStep = TopStoryStepKind.PostClimbPause;
-                            _stateElapsed = 0;
-                            _stateDuration = 0.42;
-                        }
+                        StartTopBarEffect(effect, top);
+                    }
+                    else if (!ForceQuietSleep && !snapshot.IsMeetingActive)
+                    {
+                        // Default initial top-bar pose: stay seamlessly facing forward head-on-ledge!
+                        _facingDirection = 1.0;
+                        EnterTimedState(CompanionStateKind.ChinRest, 60.0);
                     }
                 }
                 else
                 {
                     PerchZone = PerchZone.WindowTop;
-                    EnterTimedState(_stealthDestination.ClimbToGreet ? CompanionStateKind.Yawning : CompanionStateKind.Idle,
-                        _stealthDestination.ClimbToGreet ? 1.75 : 5.0);
+                    EnterTimedState(CompanionStateKind.ChinRest, 60.0);
                 }
                 break;
 
@@ -1220,6 +1441,11 @@ public sealed class CompanionEngine
         switch (StateKind)
         {
             case CompanionStateKind.TuckedWaiting:
+                if (PendingWindowSwitch is null || PerchZone == PerchZone.ScreenRightPeek)
+                {
+                    EnterTimedState(PerchZone == PerchZone.WindowTop ? CompanionStateKind.Idle : CompanionStateKind.PeekingRight, 20.0);
+                    break;
+                }
                 _stateElapsed = Math.Min(_stateDuration, _stateElapsed + dt);
                 break;
 
@@ -1289,14 +1515,60 @@ public sealed class CompanionEngine
             case CompanionStateKind.Loafing:
             case CompanionStateKind.ChinRest:
             case CompanionStateKind.Sleeping:
+            {
+                bool isRestingAwakeOnTop = StateKind != CompanionStateKind.Sleeping
+                    && PerchZone == PerchZone.WindowTop
+                    && PendingWindowSwitch is null;
+
+                if (isRestingAwakeOnTop && Preferences.TopEffectsEnabled &&
+                    !context.ForceQuietSleep && !context.IsMeetingActive &&
+                    !IsHoveringDog && !IsPointerDownOnDog)
+                {
+                    TopBarEffectTimer += dt;
+                    bool typingPaused = Preferences.TypingPauseEnabled && snapshot.SecondsSinceLastKeyDown < 2.5;
+                    if (!typingPaused && TopBarEffectTimer >= Preferences.TopEffectIntervalSeconds && layout.TopPerch is { } top)
+                    {
+                        TopBarEffectTimer = 0;
+                        var pool = Preferences.OrderedEnabledTopEffects;
+                        var candidates = (pool.Count > 1 && _lastAutoTopEffect is { } prev)
+                            ? System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(pool, e => e != prev))
+                            : new List<TopBarEffect>(pool);
+                        var chosen = candidates[_rng.Next(candidates.Count)];
+                        if (StateKind == CompanionStateKind.ChinRest)
+                        {
+                            _facingDirection = -1.0;
+                            _pendingRiseEffect = chosen;
+                            StateKind = CompanionStateKind.TopStory;
+                            TopStoryStep = TopStoryStepKind.RisingToFullBody;
+                            _stateElapsed = 0;
+                            _stateDuration = 0.62;
+                        }
+                        else
+                        {
+                            StartTopBarEffect(chosen, top);
+                        }
+                        return;
+                    }
+                }
+
                 _stateRemaining -= dt;
                 if (_stateRemaining <= 0)
                 {
-                    if (PerchZone == PerchZone.WindowTop && layout.TopPerch is { } top)
+                    if (PerchZone == PerchZone.WindowTop)
                     {
-                        var (nextKind, nextDir, nextDur) = WestieBehaviorPlanner.ChooseNextTopBehavior(Position.X, top, context);
-                        _walkDirection = nextDir;
-                        EnterTimedState(nextKind, nextDur);
+                        if (context.ForceQuietSleep || context.IsMeetingActive)
+                            EnterTimedState(CompanionStateKind.Sleeping, 24.0);
+                        else if (context.ShouldOfferTennisBreak)
+                            EnterTimedState(CompanionStateKind.HoldingTennisBall, 22.0);
+                        else if (StateKind == CompanionStateKind.Sleeping)
+                        {
+                            TopBarEffectTimer = 0;
+                            EnterTimedState(CompanionStateKind.Loafing, 60.0);
+                        }
+                        else
+                        {
+                            EnterTimedState(StateKind, 60.0);
+                        }
                     }
                     else
                     {
@@ -1304,6 +1576,7 @@ public sealed class CompanionEngine
                     }
                 }
                 break;
+            }
 
             case CompanionStateKind.PeekingRight:
             {
@@ -1319,7 +1592,7 @@ public sealed class CompanionEngine
                 {
                     RightPeekDwellTimer = 0;
                     double targetX = top.ClampedX(top.MaxX - Math.Min(110, top.Width * 0.26), 22);
-                    BeginStealthClimbToTop(targetX, layout.ActiveWindowId ?? TrackedWindowId, climbToGreet: true);
+                    BeginStealthClimbToTop(targetX, layout.ActiveWindowId ?? TrackedWindowId, effectOnArrival: null);
                     return;
                 }
 
@@ -1537,6 +1810,12 @@ public sealed class CompanionEngine
                 _stateElapsed += dt;
                 if (_stateElapsed >= _stateDuration)
                 {
+                    // Plain climb to top (no immediate effect): stay seamlessly in head-on-ledge forward pose!
+                    if (_stealthDestination.PerchZone == PerchZone.WindowTop && _stealthDestination.EffectOnArrival is null)
+                    {
+                        CompleteStealthArrival(snapshot, sceneSize);
+                        return;
+                    }
                     StealthPhase = StealthPhaseKind.SettlingOut;
                     _stateElapsed = 0;
                     _stateDuration = _stealthDestination.PerchZone == PerchZone.WindowTop ? 0.72 : 0.44;
@@ -1563,6 +1842,16 @@ public sealed class CompanionEngine
 
         switch (TopStoryStep)
         {
+            case TopStoryStepKind.RisingToFullBody:
+                _currentWalkSpeed = 0;
+                _stateElapsed += dt;
+                if (_stateElapsed >= _stateDuration)
+                {
+                    _squashSpring.Impulse(-1.4);
+                    StartTopBarEffect(_pendingRiseEffect, top);
+                }
+                break;
+
             case TopStoryStepKind.PostClimbPause:
                 _currentWalkSpeed = 0;
                 _facingDirection = -1.0;
@@ -1685,24 +1974,169 @@ public sealed class CompanionEngine
                 StepFlashStep(dt, top);
                 break;
 
+            case TopStoryStepKind.BearShake:
+            {
+                _currentWalkSpeed = 0;
+                _facingDirection = 1.0;
+                int idx = Math.Clamp(_effectFrameIndex, 0, BearShakeDurations.Length - 1);
+                double dur = BearShakeDurations[idx];
+                double liveX = top.ClampedX(_effectOriginX + BearShakeOffsets[idx] * ScaleFactor, 20);
+                Position = new Vec2(liveX, Position.Y);
+                _offsetFromWindowMinX = liveX - top.WindowMinX;
+
+                _stateElapsed += dt;
+                if (_stateElapsed >= dur)
+                {
+                    _stateElapsed = 0;
+                    if (idx + 1 < BearShakeDurations.Length)
+                    {
+                        _effectFrameIndex = idx + 1;
+                    }
+                    else if (_effectCyclesRemaining > 1)
+                    {
+                        _effectCyclesRemaining -= 1;
+                        _effectFrameIndex = 0;
+                    }
+                    else
+                    {
+                        double restX = top.ClampedX(_effectOriginX, 20);
+                        Position = new Vec2(restX, Position.Y);
+                        _offsetFromWindowMinX = restX - top.WindowMinX;
+                        TopStoryStep = TopStoryStepKind.SmileSit;
+                        _stateElapsed = 0;
+                        _stateDuration = 2.6;
+                    }
+                }
+                break;
+            }
+
+            case TopStoryStepKind.WandererKick:
+            {
+                _currentWalkSpeed = 0;
+                _facingDirection = _effectMirrorSign;
+                int idx = Math.Clamp(_effectFrameIndex, 0, WandererKickDurations.Length - 1);
+                double dur = WandererKickDurations[idx];
+                _stateElapsed += dt;
+                if (_stateElapsed >= dur)
+                {
+                    _stateElapsed = 0;
+                    if (idx + 1 < WandererKickDurations.Length)
+                    {
+                        _effectFrameIndex = idx + 1;
+                        if (_effectFrameIndex == 3) _squashSpring.Impulse(1.8);
+                    }
+                    else if (_effectCyclesRemaining > 1)
+                    {
+                        _effectCyclesRemaining -= 1;
+                        _effectMirrorSign = -_effectMirrorSign;
+                        _effectFrameIndex = 1;
+                    }
+                    else
+                    {
+                        _facingDirection = 1.0;
+                        TopStoryStep = TopStoryStepKind.SmileSit;
+                        _stateElapsed = 0;
+                        _stateDuration = 2.6;
+                    }
+                }
+                break;
+            }
+
+            case TopStoryStepKind.HeadTilt:
+            {
+                _currentWalkSpeed = 0;
+                _facingDirection = 1.0;
+                int idx = Math.Clamp(_effectFrameIndex, 0, HeadTiltSequence.Length - 1);
+                double dur = HeadTiltSequence[idx].Duration;
+                _stateElapsed += dt;
+                if (_stateElapsed >= dur)
+                {
+                    _stateElapsed = 0;
+                    if (idx + 1 < HeadTiltSequence.Length)
+                    {
+                        _effectFrameIndex = idx + 1;
+                        if (_effectFrameIndex == 10) _squashSpring.Impulse(0.9);
+                    }
+                    else
+                    {
+                        TopBarEffectTimer = 0;
+                        EnterTimedState(CompanionStateKind.SitCalm, 60.0);
+                    }
+                }
+                break;
+            }
+
+            case TopStoryStepKind.BellyRoll:
+            {
+                _currentWalkSpeed = 0;
+                _stateElapsed += dt;
+                switch (_bellyRollPhase)
+                {
+                    case BellyRollPhaseKind.FlopDown:
+                        _facingDirection = _bellyRollSideSign;
+                        if (_stateElapsed >= _stateDuration)
+                        {
+                            _squashSpring.Impulse(-1.2);
+                            _bellyRollPhase = BellyRollPhaseKind.WaitingBellyUp;
+                            _bellyRollWiggleElapsed = 0;
+                            _stateElapsed = 0;
+                            _stateDuration = BellyRollIdleTimeout;
+                        }
+                        break;
+
+                    case BellyRollPhaseKind.WaitingBellyUp:
+                        _facingDirection = _bellyRollSideSign;
+                        _bellyRollWiggleElapsed += dt;
+                        if (_stateElapsed >= _stateDuration)
+                        {
+                            _bellyRollPhase = BellyRollPhaseKind.StandingUp;
+                            _stateElapsed = 0;
+                            _stateDuration = 0.28;
+                        }
+                        break;
+
+                    case BellyRollPhaseKind.RollingOver:
+                    {
+                        double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
+                        double liveX = top.ClampedX(_rollStartX + (_rollTargetX - _rollStartX) * EaseInOutCubic(u), 22);
+                        Position = new Vec2(liveX, Position.Y);
+                        _offsetFromWindowMinX = liveX - top.WindowMinX;
+                        _facingDirection = u < 0.45 ? _bellyRollFromSide : _bellyRollSideSign;
+                        if (_stateElapsed >= _stateDuration)
+                        {
+                            _facingDirection = _bellyRollSideSign;
+                            _squashSpring.Impulse(-1.4);
+                            _bellyRollPhase = BellyRollPhaseKind.WaitingBellyUp;
+                            _bellyRollWiggleElapsed = 0;
+                            _stateElapsed = 0;
+                            _stateDuration = BellyRollIdleTimeout;
+                        }
+                        break;
+                    }
+
+                    case BellyRollPhaseKind.StandingUp:
+                        _facingDirection = _bellyRollSideSign;
+                        if (_stateElapsed >= _stateDuration)
+                        {
+                            _facingDirection = 1.0;
+                            TopBarEffectTimer = 0;
+                            _squashSpring.Impulse(1.0);
+                            EnterTimedState(CompanionStateKind.SitCalm, 60.0);
+                        }
+                        break;
+                }
+                break;
+            }
+
             case TopStoryStepKind.SmileSit:
                 _currentWalkSpeed = 0;
                 _facingDirection = 1.0;
                 _stateElapsed += dt;
                 if (_stateElapsed >= _stateDuration)
                 {
-                    TopStoryStep = TopStoryStepKind.PreYawnWait;
-                    _stateElapsed = 0;
-                    _stateDuration = 2.6;
+                    TopBarEffectTimer = 0;
+                    EnterTimedState(CompanionStateKind.SitCalm, 60.0);
                 }
-                break;
-
-            case TopStoryStepKind.PreYawnWait:
-                _currentWalkSpeed = 0;
-                _facingDirection = 1.0;
-                _stateElapsed += dt;
-                if (_stateElapsed >= _stateDuration)
-                    EnterTimedState(CompanionStateKind.Yawning, 1.85);
                 break;
         }
     }
@@ -1711,85 +2145,92 @@ public sealed class CompanionEngine
     {
         _currentWalkSpeed = 0;
         _facingDirection = 1.0;
-        double stepDist = Math.Min(52.0 * ScaleFactor, Math.Max(24.0, top.Width * 0.14));
+        double d = _flashTravelDist;
         _stateElapsed += dt;
+
+        void SetRelX(double frac)
+        {
+            double nx = top.ClampedX(_flashOriginX + frac * d, 20);
+            Position = new Vec2(nx, Position.Y);
+            _offsetFromWindowMinX = nx - top.WindowMinX;
+        }
+
+        double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
 
         switch (FlashStepBeat)
         {
-            case FlashStepBeatKind.Stance:
-                if (_stateElapsed >= _stateDuration)
-                {
-                    _flashStartX = Position.X;
-                    _flashTargetX = Math.Min(top.MaxX - 24, Position.X + stepDist);
-                    _squashSpring.Impulse(1.6);
-                    FlashStepBeat = FlashStepBeatKind.DodgeRight;
-                    _stateElapsed = 0;
-                    _stateDuration = 0.48;
-                }
+            case FlashStepBeatKind.HoldStart:
+                SetRelX(0.0);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.PopLeft; _stateElapsed = 0; _stateDuration = 0.08; }
                 break;
 
-            case FlashStepBeatKind.DodgeRight:
+            case FlashStepBeatKind.PopLeft:
+                SetRelX(-0.02 * u);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.SplitFeintLeft; _stateElapsed = 0; _stateDuration = 0.22; }
+                break;
+
+            case FlashStepBeatKind.SplitFeintLeft:
             {
-                double dashU = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration * 0.48, 0.01));
-                double x = top.ClampedX(_flashStartX + (_flashTargetX - _flashStartX) * EaseOutCubic(dashU), 22);
-                Position = new Vec2(x, Position.Y);
-                _offsetFromWindowMinX = x - top.WindowMinX;
-                if (_stateElapsed >= _stateDuration)
-                {
-                    _squashSpring.Impulse(-1.4);
-                    FlashStepBeat = FlashStepBeatKind.StopMid;
-                    _stateElapsed = 0;
-                    _stateDuration = 0.42;
-                }
+                double frac = u < 0.60 ? (0.06 * (u / 0.60)) : (0.06 - 0.14 * ((u - 0.60) / 0.40));
+                SetRelX(frac);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.GlideWideLeft; _stateElapsed = 0; _stateDuration = 0.18; }
                 break;
             }
 
-            case FlashStepBeatKind.StopMid:
-                if (_stateElapsed >= _stateDuration)
-                {
-                    FlashStepBeat = FlashStepBeatKind.ReadyLeft;
-                    _stateElapsed = 0;
-                    _stateDuration = 0.38;
-                }
-                break;
-
-            case FlashStepBeatKind.ReadyLeft:
-                if (_stateElapsed >= _stateDuration)
-                {
-                    _flashStartX = Position.X;
-                    _flashTargetX = Math.Max(top.MinX + 24, Position.X - stepDist);
-                    _squashSpring.Impulse(1.6);
-                    FlashStepBeat = FlashStepBeatKind.DodgeLeft;
-                    _stateElapsed = 0;
-                    _stateDuration = 0.50;
-                }
-                break;
-
-            case FlashStepBeatKind.DodgeLeft:
+            case FlashStepBeatKind.GlideWideLeft:
             {
-                double dashU = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration * 0.48, 0.01));
-                double x = top.ClampedX(_flashStartX + (_flashTargetX - _flashStartX) * EaseOutCubic(dashU), 22);
-                Position = new Vec2(x, Position.Y);
-                _offsetFromWindowMinX = x - top.WindowMinX;
-                if (_stateElapsed >= _stateDuration)
-                {
-                    _squashSpring.Impulse(-1.4);
-                    FlashStepBeat = FlashStepBeatKind.FinishStop;
-                    _stateElapsed = 0;
-                    _stateDuration = 0.46;
-                }
+                double eased = 1.0 - (1.0 - u) * (1.0 - u);
+                SetRelX(-0.08 - 0.52 * eased);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.SnapCloseLeft; _stateElapsed = 0; _stateDuration = 0.18; }
                 break;
             }
 
-            case FlashStepBeatKind.FinishStop:
+            case FlashStepBeatKind.SnapCloseLeft:
+                SetRelX(-0.60 - 0.38 * EaseOutCubic(u));
+                if (_stateElapsed >= _stateDuration) { SetRelX(-1.0); FlashStepBeat = FlashStepBeatKind.StatueFreezeLeft; _stateElapsed = 0; _stateDuration = 0.72; }
+                break;
+
+            case FlashStepBeatKind.StatueFreezeLeft:
+                SetRelX(-1.0);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.PopRight; _stateElapsed = 0; _stateDuration = 0.08; }
+                break;
+
+            case FlashStepBeatKind.PopRight:
+                SetRelX(-1.0 + 0.02 * u);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.SplitFeintRight; _stateElapsed = 0; _stateDuration = 0.23; }
+                break;
+
+            case FlashStepBeatKind.SplitFeintRight:
+            {
+                double frac = u < 0.55 ? (-1.0 - 0.07 * (u / 0.55)) : (-1.07 + 0.19 * ((u - 0.55) / 0.45));
+                SetRelX(frac);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.GlideWideRight; _stateElapsed = 0; _stateDuration = 0.18; }
+                break;
+            }
+
+            case FlashStepBeatKind.GlideWideRight:
+            {
+                double eased = 1.0 - (1.0 - u) * (1.0 - u);
+                SetRelX(-0.88 + 0.53 * eased);
+                if (_stateElapsed >= _stateDuration) { FlashStepBeat = FlashStepBeatKind.SnapCloseRight; _stateElapsed = 0; _stateDuration = 0.20; }
+                break;
+            }
+
+            case FlashStepBeatKind.SnapCloseRight:
+                SetRelX(-0.35 + 0.33 * EaseOutCubic(u));
+                if (_stateElapsed >= _stateDuration) { SetRelX(0.0); FlashStepBeat = FlashStepBeatKind.StatueFinish; _stateElapsed = 0; _stateDuration = 0.70; }
+                break;
+
+            case FlashStepBeatKind.StatueFinish:
+                SetRelX(0.0);
                 if (_stateElapsed >= _stateDuration)
                 {
                     _flashRoundsRemaining -= 1;
                     if (_flashRoundsRemaining > 0)
                     {
-                        FlashStepBeat = FlashStepBeatKind.Stance;
+                        FlashStepBeat = FlashStepBeatKind.PopLeft;
                         _stateElapsed = 0;
-                        _stateDuration = 0.38;
+                        _stateDuration = 0.08;
                     }
                     else
                     {
@@ -1863,9 +2304,11 @@ public sealed class CompanionEngine
             ClearCrossfade();
             return (1.0, _fadeOutLayer);
         }
-        double eased = EaseInOutCubic(_poseCrossfadeElapsed / _poseCrossfadeDuration);
-        _fadeOutLayer = _fadeOutLayer with { IsVisible = true, AnchorPos = currentPos, Opacity = 1.0 - eased };
-        return (eased, _fadeOutLayer);
+        double u = Math.Clamp(_poseCrossfadeElapsed / _poseCrossfadeDuration, 0, 1);
+        double inAlpha = Math.Min(1.0, EaseInOutCubic(Math.Min(1.0, u / 0.75)));
+        double outAlpha = u < 0.75 ? 1.0 : Math.Max(0.0, 1.0 - (u - 0.75) / 0.25);
+        _fadeOutLayer = _fadeOutLayer with { IsVisible = true, AnchorPos = currentPos, Opacity = outAlpha };
+        return (inAlpha, _fadeOutLayer);
     }
 
     private TreatRenderState BuildTreatRender()
@@ -2063,7 +2506,7 @@ public sealed class CompanionEngine
         double breathXScale = 1.0;
         SpriteAssetKey desiredKey;
         Size2D desiredSize = TopDogSize;
-        double fadeDur = 0.24;
+        double fadeDur = 0;
 
         if (StateKind == CompanionStateKind.Walking && _currentWalkSpeed < 5.0)
         {
@@ -2074,7 +2517,7 @@ public sealed class CompanionEngine
             switch (StateKind)
             {
                 case CompanionStateKind.TopStory:
-                    desiredKey = ComputeTopStoryVisual(dt, ref bobY, ref strideTilt, ref breathXScale, ref breathYScale, ref fadeDur);
+                    desiredKey = ComputeTopStoryVisual(dt, ref bobY, ref strideTilt, ref breathXScale, ref breathYScale, ref fadeDur, ref desiredSize);
                     break;
 
                 case CompanionStateKind.Yawning:
@@ -2143,8 +2586,9 @@ public sealed class CompanionEngine
 
                 case CompanionStateKind.ChinRest:
                 {
-                    desiredKey = SpriteAssetKey.WestieChinLedge;
-                    desiredSize = ChinLedgeDogSize;
+                    // Exact same sprite & size as the end of TentativePeek -> ZERO jump after left/right glance!
+                    desiredKey = SpriteAssetKey.WestieTopPeekCenter;
+                    desiredSize = TopPeekDogSize;
                     double br = Math.Sin(_breathPhase * 0.75) * 0.014;
                     breathYScale = 1.0 + br;
                     breathXScale = 1.0 - br * 0.5;
@@ -2221,20 +2665,44 @@ public sealed class CompanionEngine
 
         ApplySpriteTransition(desiredKey, fadeDur);
 
-        bool unmirrored = desiredKey is SpriteAssetKey.WestieLookLeftHeadLeft
+        bool unmirrored = desiredKey is SpriteAssetKey.WestieTopPeekCenter
+            or SpriteAssetKey.WestieLookLeftHeadLeft
             or SpriteAssetKey.WestieLookLeftHeadCenter
             or SpriteAssetKey.WestieLookLeftHeadRight
             or SpriteAssetKey.WestieFlashStep1
             or SpriteAssetKey.WestieFlashStep2
             or SpriteAssetKey.WestieFlashStep3
             or SpriteAssetKey.WestieFlashStep4
-            or SpriteAssetKey.WestieFlashStep5;
+            or SpriteAssetKey.WestieFlashStep5
+            or SpriteAssetKey.WestieFlashStep6
+            or SpriteAssetKey.WestieFlashStep7
+            or SpriteAssetKey.WestieFlashStep8
+            or SpriteAssetKey.WestieBearShake1
+            or SpriteAssetKey.WestieBearShake2
+            or SpriteAssetKey.WestieBearShake3
+            or SpriteAssetKey.WestieBearShake4
+            or SpriteAssetKey.WestieBearShake5
+            or SpriteAssetKey.WestieBearShake6
+            or SpriteAssetKey.WestieBearShake7
+            or SpriteAssetKey.WestieBearShake8
+            or SpriteAssetKey.WestieHeadTilt1
+            or SpriteAssetKey.WestieHeadTilt2
+            or SpriteAssetKey.WestieHeadTilt3
+            or SpriteAssetKey.WestieHeadTilt4
+            or SpriteAssetKey.WestieHeadTilt5
+            or SpriteAssetKey.WestieHeadTilt6
+            or SpriteAssetKey.WestieBellyRoll5;
         double effectiveDir = unmirrored ? 1.0 : dirSign;
+
+        bool isTopPeekPose = desiredKey is SpriteAssetKey.WestieTopPeekCenter
+            or SpriteAssetKey.WestieTopPeekLeft
+            or SpriteAssetKey.WestieTopPeekRight;
+        var anchorPt = new Vec2(0.5, isTopPeekPose ? 0.088 : 0.04);
 
         var finalPos = new Vec2(Position.X, Position.Y + bobY);
         var (alpha, fadeLayer) = StepCrossfade(dt, finalPos);
         var primary = new SpriteRenderLayer(
-            true, desiredKey, sp, finalPos, new Vec2(0.5, 0.04), desiredSize,
+            true, desiredKey, sp, finalPos, anchorPt, desiredSize,
             effectiveDir * (1.0 - s * 0.30) * breathXScale,
             (1.0 + s * 0.34) * breathYScale,
             _swingRotationSpring.Value + strideTilt,
@@ -2251,10 +2719,41 @@ public sealed class CompanionEngine
         ref double strideTilt,
         ref double breathXScale,
         ref double breathYScale,
-        ref double fadeDur)
+        ref double fadeDur,
+        ref Size2D desiredSize)
     {
         switch (TopStoryStep)
         {
+            case TopStoryStepKind.RisingToFullBody:
+            {
+                double u = _stateElapsed / Math.Max(_stateDuration, 0.01);
+                if (u < 0.20)
+                {
+                    desiredSize = TopPeekDogSize;
+                    fadeDur = 0.08;
+                    double dip = Math.Sin((u / 0.20) * Math.PI) * 0.08;
+                    breathYScale = 1.0 - dip;
+                    breathXScale = 1.0 + dip * 0.45;
+                    return SpriteAssetKey.WestieTopPeekCenter;
+                }
+                if (u < 0.72)
+                {
+                    double climbU = (u - 0.20) / 0.52;
+                    desiredSize = TopDogSize;
+                    fadeDur = 0.16;
+                    bobY += Math.Sin(climbU * Math.PI) * 5.0;
+                    _facingDirection = _pendingRiseEffect == TopBarEffect.Patrol ? -1.0 : 1.0;
+                    return SpriteAssetKey.WestieClimbUp;
+                }
+                double landU = (u - 0.72) / 0.28;
+                desiredSize = TopDogSize;
+                fadeDur = 0.16;
+                double settle = Math.Sin(landU * Math.PI) * 0.05;
+                breathYScale = 1.0 - settle;
+                breathXScale = 1.0 + settle * 0.4;
+                return SpriteAssetKey.WestieIdle;
+            }
+
             case TopStoryStepKind.PostClimbPause:
             case TopStoryStepKind.PostWalkPause:
             {
@@ -2334,69 +2833,162 @@ public sealed class CompanionEngine
 
             case TopStoryStepKind.FlashStep:
             {
-                fadeDur = 0.07;
+                desiredSize = FlashStepDogSize;
+                fadeDur = 0;
+                double h = TopDogSize.Height;
+                double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
                 switch (FlashStepBeat)
                 {
-                    case FlashStepBeatKind.Stance:
-                    {
-                        double u = _stateElapsed / Math.Max(_stateDuration, 0.01);
-                        double coil = SmoothTiltPulse(u, 0.72, 0.30, 0.06);
-                        breathYScale = 1.0 - coil;
-                        breathXScale = 1.0 + coil * 0.45;
+                    case FlashStepBeatKind.HoldStart:
+                    case FlashStepBeatKind.StatueFreezeLeft:
+                    case FlashStepBeatKind.StatueFinish:
                         return SpriteAssetKey.WestieFlashStep1;
-                    }
-                    case FlashStepBeatKind.DodgeRight:
-                    {
-                        double dashU = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration * 0.48, 0.01));
-                        bobY += Math.Sin(dashU * Math.PI) * 6.5 * ScaleFactor;
-                        strideTilt = -Math.Sin(dashU * Math.PI) * 0.08;
+                    case FlashStepBeatKind.PopLeft:
+                    case FlashStepBeatKind.PopRight:
+                        bobY -= 0.01 * h;
                         return SpriteAssetKey.WestieFlashStep2;
-                    }
-                    case FlashStepBeatKind.StopMid:
-                    case FlashStepBeatKind.FinishStop:
-                    {
-                        double u = _stateElapsed / Math.Max(_stateDuration, 0.01);
-                        double snap = SmoothTiltPulse(u, 0.22, 0.22, 0.05);
-                        breathYScale = 1.0 + snap;
-                        breathXScale = 1.0 - snap * 0.35;
+                    case FlashStepBeatKind.SplitFeintLeft:
+                        bobY -= 0.05 * h;
                         return SpriteAssetKey.WestieFlashStep3;
-                    }
-                    case FlashStepBeatKind.ReadyLeft:
-                    {
-                        double u = _stateElapsed / Math.Max(_stateDuration, 0.01);
-                        double coil = SmoothTiltPulse(u, 0.72, 0.30, 0.06);
-                        breathYScale = 1.0 - coil;
-                        breathXScale = 1.0 + coil * 0.45;
+                    case FlashStepBeatKind.GlideWideLeft:
+                        bobY -= (0.05 - 0.04 * u) * h;
                         return SpriteAssetKey.WestieFlashStep4;
+                    case FlashStepBeatKind.SnapCloseLeft:
+                        return SpriteAssetKey.WestieFlashStep5;
+                    case FlashStepBeatKind.SplitFeintRight:
+                        bobY -= 0.055 * h;
+                        return SpriteAssetKey.WestieFlashStep6;
+                    case FlashStepBeatKind.GlideWideRight:
+                        bobY -= (0.05 - 0.04 * u) * h;
+                        return SpriteAssetKey.WestieFlashStep7;
+                    case FlashStepBeatKind.SnapCloseRight:
+                    default:
+                        return SpriteAssetKey.WestieFlashStep8;
+                }
+            }
+
+            case TopStoryStepKind.BearShake:
+            {
+                desiredSize = FlashStepDogSize;
+                fadeDur = 0;
+                int idx = Math.Clamp(_effectFrameIndex, 0, BearShakeFrames.Length - 1);
+                double u = Math.Min(1.0, _stateElapsed / Math.Max(BearShakeDurations[idx], 0.01));
+                double h = TopDogSize.Height;
+                if (idx == 1)
+                {
+                    bobY -= 0.035 * h;
+                    double dip = Math.Sin(u * Math.PI) * 0.05;
+                    breathYScale = 1.0 - dip;
+                    breathXScale = 1.0 + dip * 0.45;
+                }
+                else if (idx == 2)
+                {
+                    bobY -= 0.02 * h;
+                    strideTilt = Math.Sin(u * Math.PI * 4.0) * 0.032;
+                }
+                else if (idx is 3 or 7)
+                {
+                    bobY += Math.Sin(u * Math.PI) * 0.035 * h;
+                }
+                else if (idx == 6)
+                {
+                    strideTilt = Math.Sin(u * Math.PI * 4.0) * 0.028;
+                }
+                return BearShakeFrames[idx];
+            }
+
+            case TopStoryStepKind.WandererKick:
+            {
+                desiredSize = FlashStepDogSize;
+                fadeDur = 0;
+                int idx = Math.Clamp(_effectFrameIndex, 0, WandererKickFrames.Length - 1);
+                double u = Math.Min(1.0, _stateElapsed / Math.Max(WandererKickDurations[idx], 0.01));
+                double h = TopDogSize.Height;
+                if (idx == 1)
+                {
+                    bobY -= 0.025 * h;
+                    breathYScale = 1.0 - Math.Sin(u * Math.PI) * 0.04;
+                }
+                else if (idx == 3)
+                {
+                    breathYScale = 1.0 + 0.05;
+                    breathXScale = 1.0 - 0.03;
+                }
+                else if (idx == 4)
+                {
+                    double proud = Math.Sin(u * Math.PI) * 0.025;
+                    breathYScale = 1.0 + proud;
+                    breathXScale = 1.0 - proud * 0.4;
+                }
+                return WandererKickFrames[idx];
+            }
+
+            case TopStoryStepKind.HeadTilt:
+            {
+                int idx = Math.Clamp(_effectFrameIndex, 0, HeadTiltSequence.Length - 1);
+                desiredSize = TopDogSize;
+                fadeDur = 0;
+                double br = Math.Sin(_breathPhase * 0.85) * 0.012;
+                breathYScale = 1.0 + br;
+                breathXScale = 1.0 - br * 0.45;
+                return HeadTiltSequence[idx].Key;
+            }
+
+            case TopStoryStepKind.BellyRoll:
+            {
+                desiredSize = TopDogSize;
+                fadeDur = 0;
+                switch (_bellyRollPhase)
+                {
+                    case BellyRollPhaseKind.FlopDown:
+                    {
+                        double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
+                        double dip = Math.Sin(u * Math.PI) * 0.05;
+                        breathYScale = 1.0 - dip;
+                        breathXScale = 1.0 + dip * 0.45;
+                        return SpriteAssetKey.WestieBellyRoll1;
                     }
-                    case FlashStepBeatKind.DodgeLeft:
+                    case BellyRollPhaseKind.WaitingBellyUp:
+                    {
+                        int wiggleIdx = (int)(_bellyRollWiggleElapsed / 0.65) % 2;
+                        double br = Math.Sin(_breathPhase * 1.15) * 0.018;
+                        breathYScale = 1.0 + br;
+                        breathXScale = 1.0 - br * 0.45;
+                        strideTilt = Math.Sin(_breathPhase * 0.9) * 0.022;
+                        return wiggleIdx == 0 ? SpriteAssetKey.WestieBellyRoll2 : SpriteAssetKey.WestieBellyRoll3;
+                    }
+                    case BellyRollPhaseKind.RollingOver:
+                    {
+                        double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
+                        if (u < 0.22) return SpriteAssetKey.WestieBellyRoll4;
+                        if (u < 0.52)
+                        {
+                            bobY += Math.Sin(((u - 0.22) / 0.30) * Math.PI) * 2.5 * ScaleFactor;
+                            return SpriteAssetKey.WestieBellyRoll5;
+                        }
+                        if (u < 0.76) return SpriteAssetKey.WestieBellyRoll6;
+                        return SpriteAssetKey.WestieBellyRoll3;
+                    }
+                    case BellyRollPhaseKind.StandingUp:
                     default:
                     {
-                        double dashU = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration * 0.48, 0.01));
-                        bobY += Math.Sin(dashU * Math.PI) * 6.5 * ScaleFactor;
-                        strideTilt = Math.Sin(dashU * Math.PI) * 0.08;
-                        return SpriteAssetKey.WestieFlashStep5;
+                        double u = Math.Min(1.0, _stateElapsed / Math.Max(_stateDuration, 0.01));
+                        double push = Math.Sin(u * Math.PI) * 0.06;
+                        breathYScale = 1.0 + push;
+                        breathXScale = 1.0 - push * 0.4;
+                        return SpriteAssetKey.WestieBellyRoll1;
                     }
                 }
             }
 
             case TopStoryStepKind.SmileSit:
-            {
-                fadeDur = 0.26;
-                strideTilt = SmoothTiltPulse(_stateElapsed, 1.15, 0.48, 0.115)
-                    - SmoothTiltPulse(_stateElapsed, 2.65, 0.48, 0.115)
-                    + SmoothTiltPulse(_stateElapsed, 3.85, 0.38, 0.070);
-                double br = Math.Sin(_breathPhase * 0.85) * 0.016;
-                breathYScale = 1.0 + br;
-                breathXScale = 1.0 - br * 0.5;
-                return SpriteAssetKey.WestieSitTilt;
-            }
-
-            case TopStoryStepKind.PreYawnWait:
             default:
             {
-                fadeDur = 0.24;
-                double br = Math.Sin(_breathPhase * 0.65) * 0.015;
+                fadeDur = 0;
+                strideTilt = SmoothTiltPulse(_stateElapsed, 1.05, 0.48, 0.115)
+                    - SmoothTiltPulse(_stateElapsed, 2.45, 0.48, 0.115)
+                    + SmoothTiltPulse(_stateElapsed, 3.55, 0.38, 0.070);
+                double br = Math.Sin(_breathPhase * 0.85) * 0.016;
                 breathYScale = 1.0 + br;
                 breathXScale = 1.0 - br * 0.5;
                 return SpriteAssetKey.WestieSitTilt;
@@ -2449,7 +3041,7 @@ public sealed class CompanionEngine
             }
             case PerchZone.WindowTop:
             {
-                ApplySpriteTransition(topKey, fadeDur);
+                ApplySpriteTransition(topKey, 0);
                 double sinkY = f * (topSize.Height + 4.0);
                 bool directionalPeek = topKey is SpriteAssetKey.WestieTopPeekCenter or SpriteAssetKey.WestieTopPeekLeft or SpriteAssetKey.WestieTopPeekRight;
                 double sx = customScaleX ?? (directionalPeek ? 1.0 : (_facingDirection >= 0 ? 1.0 : -1.0));
@@ -2457,9 +3049,9 @@ public sealed class CompanionEngine
                 var pos = new Vec2(Position.X, Position.Y - sinkY + extraY);
                 var (alpha, fadeLayer) = StepCrossfade(dt, pos);
                 var layer = new SpriteRenderLayer(
-                    true, topKey, sp, pos, new Vec2(0.5, 0.04), topSize,
+                    true, topKey, sp, pos, new Vec2(0.5, directionalPeek ? 0.088 : 0.04), topSize,
                     sx, sy, curiousTilt, alpha);
-                CommitRender(layer, fadeLayer, ClipMaskKind.AboveY, Position.Y, treat, new InviteBadgeRenderState(false, Vec2.Zero));
+                CommitRender(layer, fadeLayer, f > 0.005 ? ClipMaskKind.AboveY : ClipMaskKind.None, Position.Y, treat, new InviteBadgeRenderState(false, Vec2.Zero));
                 break;
             }
         }

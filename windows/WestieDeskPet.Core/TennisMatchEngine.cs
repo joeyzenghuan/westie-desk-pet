@@ -99,7 +99,13 @@ public sealed class TennisMatchEngine
     {
         get
         {
-            string petText = Species == PetSpecies.GoldenCat ? "金渐层 🐱" : "西高地 🐶";
+            string petText = Species switch
+            {
+                PetSpecies.GoldenCat => "金渐层 🐱",
+                PetSpecies.Chinchilla => "金吉拉 🐈",
+                PetSpecies.Labrador => "拉布拉多 🐕",
+                _ => "西高地 🐶"
+            };
             return $"🧑 你  {PlayerScore}  :  {OpponentScore}  {petText}   |   回合 {RallyHits}";
         }
     }
@@ -493,7 +499,7 @@ public sealed class TennisMatchEngine
             CourtSide.Westie, new Vec2(aimX, -175), TennisShotKind.Serve,
             Difficulty == TennisDifficulty.Pro ? 0.55 : 0.20);
         RallyHits = 1;
-        SpawnPop(Species == PetSpecies.GoldenCat ? "喵! 🎾" : "汪! 🎾", new Vec2(_opponent.X, _opponent.Y + 42), "#FFFFFF");
+        SpawnPop(Species.IsCat() ? "喵! 🎾" : "汪! 🎾", new Vec2(_opponent.X, _opponent.Y + 42), "#FFFFFF");
     }
 
     private void ExecutePlayerHit(TennisShotKind kind, double charge)
@@ -535,9 +541,13 @@ public sealed class TennisMatchEngine
             }
             else
             {
-                BannerText = Species == PetSpecies.GoldenCat
-                    ? $"🐱 金渐层获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面"
-                    : $"🐶 西高地获胜 ({OpponentScore} : {PlayerScore}) 汪汪！左键/R 再战 · ESC 回桌面";
+                BannerText = Species switch
+                {
+                    PetSpecies.GoldenCat => $"🐱 金渐层获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面",
+                    PetSpecies.Chinchilla => $"🐈 金吉拉获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面",
+                    PetSpecies.Labrador => $"🐕 拉布拉多获胜 ({OpponentScore} : {PlayerScore}) 汪汪！左键/R 再战 · ESC 回桌面",
+                    _ => $"🐶 西高地获胜 ({OpponentScore} : {PlayerScore}) 汪汪！左键/R 再战 · ESC 回桌面"
+                };
             }
             return;
         }

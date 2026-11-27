@@ -104,6 +104,8 @@ public final class TennisMatchController {
         switch currentPetSpecies {
         case .westie: return "🐶 西高地"
         case .goldenCat: return "🐱 金渐层"
+        case .labrador: return "🐕 拉布拉多"
+        case .chinchilla: return "🐈 金吉拉"
         }
     }
 
@@ -605,7 +607,7 @@ public final class TennisMatchController {
             chargeRatio: (difficulty == .pro) ? 0.55 : 0.20
         )
         rallyHits = 1
-        let serveCry = (currentPetSpecies == .goldenCat) ? "喵! 🎾" : "汪! 🎾"
+        let serveCry = currentPetSpecies.isCat ? "喵! 🎾" : "汪! 🎾"
         spawnCourtPopText(serveCry, at: CGPoint(x: opponent.x, y: opponent.y + 42), color: .white)
         updateScoreboardText()
     }
@@ -649,9 +651,17 @@ public final class TennisMatchController {
             if playerScore > westieScore {
                 bannerLabel.text = "🏆 你赢啦 (\(playerScore) : \(westieScore))！左键/R 再来一局 · ESC 回桌面"
             } else {
-                let winText = (currentPetSpecies == .goldenCat)
-                    ? "🐱 金渐层获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
-                    : "🐶 西高地获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
+                let winText: String
+                switch currentPetSpecies {
+                case .goldenCat:
+                    winText = "🐱 金渐层获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
+                case .chinchilla:
+                    winText = "🐈 金吉拉获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
+                case .labrador:
+                    winText = "🐕 拉布拉多获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
+                case .westie:
+                    winText = "🐶 西高地获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
+                }
                 bannerLabel.text = winText
             }
             bannerLabel.alpha = 1.0
@@ -722,7 +732,13 @@ public final class TennisMatchController {
     }
 
     private func updateScoreboardText() {
-        let petText = (currentPetSpecies == .goldenCat) ? "金渐层 🐱" : "西高地 🐶"
+        let petText: String
+        switch currentPetSpecies {
+        case .westie: petText = "西高地 🐶"
+        case .goldenCat: petText = "金渐层 🐱"
+        case .labrador: petText = "拉布拉多 🐕"
+        case .chinchilla: petText = "金吉拉 🐈"
+        }
         scoreLabel.text = "🧑 你  \(playerScore)  :  \(westieScore)  \(petText)   |   回合 \(rallyHits)"
     }
 

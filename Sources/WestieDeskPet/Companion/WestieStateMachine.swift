@@ -4,13 +4,21 @@ import Foundation
 public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
     case westie = "westie"
     case goldenCat = "goldenCat"
+    case labrador = "labrador"
+    case chinchilla = "chinchilla"
 
     public var id: String { rawValue }
+
+    public var isCat: Bool {
+        self == .goldenCat || self == .chinchilla
+    }
 
     public var displayName: String {
         switch self {
         case .westie: return "🐶 西高地小狗"
         case .goldenCat: return "🐱 金渐层小猫"
+        case .labrador: return "🐕 拉布拉多小狗"
+        case .chinchilla: return "🐈 金吉拉小猫"
         }
     }
 
@@ -18,6 +26,8 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .westie: return "西高地"
         case .goldenCat: return "金渐层"
+        case .labrador: return "拉布拉多"
+        case .chinchilla: return "金吉拉"
         }
     }
 
@@ -25,32 +35,50 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .westie: return "westie_"
         case .goldenCat: return "cat_"
+        case .labrador: return "lab_"
+        case .chinchilla: return "chinchilla_"
         }
     }
 }
 
-public enum TopClimbRoutine: String, CaseIterable, Identifiable, Sendable {
-    case classicStory = "classicStory"
+public enum TopBarEffect: String, CaseIterable, Identifiable, Sendable {
+    case patrol = "patrol"
     case flashStep = "flashStep"
-    case random = "random"
+    case bearShake = "bearShake"
+    case wandererKick = "wandererKick"
+    case headTilt = "headTilt"
+    case windowRoll = "windowRoll"
+    case yawnSleep = "yawnSleep"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .classicStory: return "🐾 悠闲巡逻 (跳走+张望+打哈欠)"
-        case .flashStep: return "⚡ 闪身步 (起势→右闪→停→准备→左闪)"
-        case .random: return "🎲 随机轮换"
+        case .patrol: return "🐾 跳走巡逻"
+        case .flashStep: return "⚡ 闪身步"
+        case .bearShake: return "🐻 狗熊哆嗦毛"
+        case .wandererKick: return "⚽ 浪子踢球"
+        case .headTilt: return "🥺 歪头杀"
+        case .windowRoll: return "🌀 翻肚皮打滚"
+        case .yawnSleep: return "😴 打哈欠睡觉"
         }
     }
 
     public var shortLabel: String {
         switch self {
-        case .classicStory: return "悠闲巡逻"
+        case .patrol: return "跳走巡逻"
         case .flashStep: return "闪身步"
-        case .random: return "随机轮换"
+        case .bearShake: return "狗熊哆嗦毛"
+        case .wandererKick: return "浪子踢球"
+        case .headTilt: return "歪头杀"
+        case .windowRoll: return "翻肚皮打滚"
+        case .yawnSleep: return "打哈欠睡觉"
         }
     }
+
+    public static let defaultEnabled: [TopBarEffect] = [
+        .patrol, .flashStep, .bearShake, .wandererKick, .headTilt, .windowRoll, .yawnSleep
+    ]
 }
 
 public enum PerchZone: String, Equatable, Sendable {
@@ -138,7 +166,9 @@ public struct DampedSpring: Sendable, Equatable {
 }
 
 public enum StealthDestination: Equatable, Sendable {
-    case windowTop(targetX: CGFloat, climbToGreet: Bool, routineOverride: TopClimbRoutine? = nil)
+    /// Arriving on `windowTop`: if `effectOnArrival == nil`, peeks left/right and rests in the initial head-on-ledge pose!
+    /// If `effectOnArrival` is set (e.g., from manual context-menu trigger), climbs full-body and immediately plays that effect.
+    case windowTop(targetX: CGFloat, effectOnArrival: TopBarEffect? = nil)
     case windowRightPeek(targetY: CGFloat)
     case screenRightPeek(targetY: CGFloat)
 
@@ -164,17 +194,35 @@ public struct PendingWindowSwitch: Equatable, Sendable {
 }
 
 public enum FlashStepBeat: Equatable, Sendable {
-    case stance(elapsed: TimeInterval, duration: TimeInterval)
-    case dodgeRight(elapsed: TimeInterval, duration: TimeInterval, startX: CGFloat, targetX: CGFloat)
-    case stopMid(elapsed: TimeInterval, duration: TimeInterval)
-    case readyLeft(elapsed: TimeInterval, duration: TimeInterval)
-    case dodgeLeft(elapsed: TimeInterval, duration: TimeInterval, startX: CGFloat, targetX: CGFloat)
-    case finishStop(elapsed: TimeInterval, duration: TimeInterval)
+    case holdStart(elapsed: TimeInterval, duration: TimeInterval)
+    case popLeft(elapsed: TimeInterval, duration: TimeInterval)
+    case splitFeintLeft(elapsed: TimeInterval, duration: TimeInterval)
+    case glideWideLeft(elapsed: TimeInterval, duration: TimeInterval)
+    case snapCloseLeft(elapsed: TimeInterval, duration: TimeInterval)
+    case statueFreezeLeft(elapsed: TimeInterval, duration: TimeInterval)
+    case popRight(elapsed: TimeInterval, duration: TimeInterval)
+    case splitFeintRight(elapsed: TimeInterval, duration: TimeInterval)
+    case glideWideRight(elapsed: TimeInterval, duration: TimeInterval)
+    case snapCloseRight(elapsed: TimeInterval, duration: TimeInterval)
+    case statueFinish(elapsed: TimeInterval, duration: TimeInterval)
+}
+
+public enum BellyRollPhase: Equatable, Sendable {
+    /// Entry flop from sit/idle down onto side (`belly_roll_1`)
+    case flopDown(elapsed: TimeInterval, duration: TimeInterval)
+    /// Lying belly-up waiting for owner to click (`belly_roll_2 <-> belly_roll_3`); ends after 10s with no click!
+    case waitingBellyUp(idleElapsed: TimeInterval, timeout: TimeInterval, wiggleElapsed: TimeInterval)
+    /// Owner clicked! Actively rolling across spine onto opposite side (`belly_roll_4 -> 5 -> 6 -> 3`)
+    case rollingOver(elapsed: TimeInterval, duration: TimeInterval, fromSide: CGFloat, toSide: CGFloat, startX: CGFloat, targetX: CGFloat)
+    /// 10s timeout elapsed -> planting paws to stand back upright (`belly_roll_1 -> sitCalm`)
+    case standingUp(elapsed: TimeInterval, duration: TimeInterval)
 }
 
 public enum TopStoryStep: Equatable, Sendable {
     /// Brief calm landing beat after climbing onto top edge (already facing left!)
     case postClimbPause(elapsed: TimeInterval, duration: TimeInterval)
+    /// Smoothly rises from resting head-on-ledge (`topPeekCenter`) onto all four paws before playing a full-body effect!
+    case risingToFullBody(elapsed: TimeInterval, duration: TimeInterval, nextEffect: TopBarEffect)
     /// Playful bouncy puppy hops going LEFT (`hopsRemaining` little parabolic bounds)
     case hopLeft(hopsRemaining: Int, hopElapsed: TimeInterval, hopDuration: TimeInterval, restElapsed: TimeInterval, startX: CGFloat, targetX: CGFloat)
     /// Stop and look around curiously left & right before heading back
@@ -183,12 +231,18 @@ public enum TopStoryStep: Equatable, Sendable {
     case walkRight(remaining: TimeInterval)
     /// Brief stop after walking right before sitting down
     case postWalkPause(elapsed: TimeInterval, duration: TimeInterval)
-    /// Viral bipedal "闪身步" dance (`起势 → 往右闪 → 停 → 准备 → 再往左闪 → 停`, `roundsRemaining` cycles!)
-    case flashStep(roundsRemaining: Int, beat: FlashStepBeat)
-    /// Smiling warmly at the camera (`westieSitTilt`) with spaced, gentle head sways
+    /// Authentic 8-frame bipedal "闪身步" (counter-lean split + flat pinned-foot teleport glide + deadpan statue freeze!)
+    case flashStep(roundsRemaining: Int, originX: CGFloat, travelDist: CGFloat, beat: FlashStepBeat)
+    /// Authentic 8-frame bipedal "狗熊哆嗦毛" (wide straddle overhead/cross/floppy-T <-> diagonal '/' lean!)
+    case bearShake(cyclesRemaining: Int, originX: CGFloat, frameIndex: Int, elapsed: TimeInterval)
+    /// Authentic 6-frame bipedal "浪子踢球" (arm-open -> crouch -> rear-hook chamber -> whip kick -> X-cross 'W' pose!)
+    case wandererKick(roundsRemaining: Int, mirrorSign: CGFloat, frameIndex: Int, elapsed: TimeInterval)
+    /// Authentic 6-frame stationary front-sit "歪头杀" (5-tilt cascade ending on hero -36° left freeze!)
+    case headTilt(stepIndex: Int, elapsed: TimeInterval)
+    /// Interactive belly-up roll-over (`打滚.mp4`): waits up to 10s for click; click flips to opposite side & resets 10s timer!
+    case bellyRoll(phase: BellyRollPhase, sideSign: CGFloat)
+    /// Smiling warmly at the camera (`westieSitTilt`) with spaced, gentle head sways at the end of effects
     case smileSit(elapsed: TimeInterval, duration: TimeInterval)
-    /// Quiet 2.5s stillness ("owner is busy...") before yawning
-    case preYawnWait(elapsed: TimeInterval, duration: TimeInterval)
 }
 
 public enum CompanionBehaviorState: Equatable, Sendable {

@@ -110,6 +110,8 @@ public partial class OverlayWindow : Window
     {
         _currentMonitor = WindowsPlatformTracker.GetMonitorForForegroundOrCursor();
         AlignWindowToMonitor(_currentMonitor);
+        WpfSpriteBank.Shared.PreloadSpecies(Preferences.PetSpecies);
+        Preferences.Changed += () => Dispatcher.BeginInvoke(() => WpfSpriteBank.Shared.PreloadSpecies(Preferences.PetSpecies));
 
         _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
         Companion.PlaceInitially(_latestSnapshot, _currentMonitor.SizeDip);
@@ -230,7 +232,7 @@ public partial class OverlayWindow : Window
             _latestSnapshot, _currentMonitor.SizeDip);
     }
 
-    public void PreviewClimb(TopClimbRoutine? routineOverride)
+    public void PreviewClimbPeekOnTop()
     {
         if (Mode == AppInteractionMode.Tennis) SwitchToMode(AppInteractionMode.Companion);
         _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
@@ -239,8 +241,14 @@ public partial class OverlayWindow : Window
         Companion.BeginStealthClimbToTop(
             targetX,
             _latestSnapshot.PerchLayout.ActiveWindowId ?? Companion.TrackedWindowId,
-            climbToGreet: true,
-            routineOverride: routineOverride);
+            effectOnArrival: null);
+    }
+
+    public void PlayTopBarEffect(TopBarEffect effect)
+    {
+        if (Mode == AppInteractionMode.Tennis) SwitchToMode(AppInteractionMode.Companion);
+        _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
+        Companion.TriggerTopBarEffect(effect, _latestSnapshot, _currentMonitor.SizeDip);
     }
 
     public void FeedSnack()
@@ -262,8 +270,8 @@ public partial class OverlayWindow : Window
         }
         _preferencesWindow = new PreferencesWindow(
             Preferences,
-            onPreviewClimb: () => PreviewClimb(null),
-            onPreviewFlashStep: () => PreviewClimb(TopClimbRoutine.FlashStep),
+            onPreviewPeek: PreviewClimbPeekOnTop,
+            onPlayEffect: PlayTopBarEffect,
             onPerchChanged: SummonToActiveWindow);
         _preferencesWindow.Closed += (_, _) => _preferencesWindow = null;
         _preferencesWindow.Show();
@@ -630,68 +638,24 @@ public partial class OverlayWindow : Window
             return mi;
         }
 
+        // 1. Most-used: Playable Top-Bar Effects right on Level 1!
+        menu.Items.Add(MakeItem("👀 探头张望", PreviewClimbPeekOnTop));
+        foreach (var eff in Enum.GetValues<TopBarEffect>())
+        {
+            var e = eff;
+            menu.Items.Add(MakeItem(e.DisplayName(), () => PlayTopBarEffect(e)));
+        }
+
+        menu.Items.Add(new Separator());
+
+        // 2. Feed Snack & Quiet Sleep right after effects!
+        menu.Items.Add(MakeItem(sp.IsCat() ? "🐟 喂一条小鱼干" : "🦴 喂一根骨头饼干", FeedSnack));
+        menu.Items.Add(MakeItem(ForceQuietSleep ? "☀️ 取消固定趴睡" : "💤 安静趴睡模式", ToggleQuietSleep));
+
+        menu.Items.Add(new Separator());
+
+        // 3. Tennis & Tennis Speed grouped together!
         menu.Items.Add(MakeItem("🎾 开始打网球 (WASD + 鼠标)", () => SwitchToMode(AppInteractionMode.Tennis)));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(MakeItem("📍 移到当前窗口正上方", () => MoveToZone(PerchZone.WindowTop)));
-        menu.Items.Add(MakeItem("👀 移到屏幕右侧边", MoveToRightEdge));
-        menu.Items.Add(MakeItem("🐾 立即预览爬顶", () => PreviewClimb(null)));
-        menu.Items.Add(MakeItem("⚡ 立即预览闪身步", () => PreviewClimb(TopClimbRoutine.FlashStep)));
-        menu.Items.Add(new Separator());
-
-        var speciesMenu = new MenuItem { Header = $"🎭 切换宠物: {sp.ShortName()}" };
-        foreach (var cand in Enum.GetValues<PetSpecies>())
-        {
-            var c = cand;
-            speciesMenu.Items.Add(MakeItem(c.DisplayName(), () => prefs.PetSpecies = c, c == sp));
-        }
-        menu.Items.Add(speciesMenu);
-
-        var routineMenu = new MenuItem { Header = $"🎬 爬顶特效: {prefs.TopClimbRoutine.ShortLabel()}" };
-        foreach (var rt in Enum.GetValues<TopClimbRoutine>())
-        {
-            var r = rt;
-            routineMenu.Items.Add(MakeItem(r.DisplayName(), () => prefs.TopClimbRoutine = r, r == prefs.TopClimbRoutine));
-        }
-        menu.Items.Add(routineMenu);
-
-        var perchMenu = new MenuItem { Header = "🧭 陪伴位置偏好" };
-        foreach (var pp in Enum.GetValues<PerchPreference>())
-        {
-            var p = pp;
-            perchMenu.Items.Add(MakeItem(p.DisplayName(), () => { prefs.PerchPreference = p; SummonToActiveWindow(); }, p == prefs.PerchPreference));
-        }
-        menu.Items.Add(perchMenu);
-
-        var delayMenu = new MenuItem { Header = $"🕵️ 换窗等待: {CompanionPreferences.FormatDuration(prefs.WindowSwitchDelaySeconds)}" };
-        foreach (var (title, secs) in CompanionPreferences.SwitchDelayPresets)
-        {
-            double s = secs;
-            delayMenu.Items.Add(MakeItem(title, () => prefs.WindowSwitchDelaySeconds = s, Math.Abs(prefs.WindowSwitchDelaySeconds - s) < 0.1));
-        }
-        menu.Items.Add(delayMenu);
-
-        string climbLabel = prefs.ClimbToTopEnabled ? CompanionPreferences.FormatDuration(prefs.ClimbToTopIntervalSeconds) : "已关闭";
-        var climbMenu = new MenuItem { Header = $"🐾 爬顶互动: {climbLabel}" };
-        foreach (var (title, en, secs) in CompanionPreferences.ClimbIntervalPresets)
-        {
-            bool enabled = en;
-            double s = secs;
-            bool sel = enabled ? (prefs.ClimbToTopEnabled && Math.Abs(prefs.ClimbToTopIntervalSeconds - s) < 0.5) : !prefs.ClimbToTopEnabled;
-            climbMenu.Items.Add(MakeItem(title, () => { prefs.ClimbToTopEnabled = enabled; if (enabled) prefs.ClimbToTopIntervalSeconds = s; }, sel));
-        }
-        menu.Items.Add(climbMenu);
-
-        var scaleMenu = new MenuItem { Header = $"📏 宠物大小: {CompanionPreferences.FormatScale(prefs.DogScale)}" };
-        foreach (var (title, scale) in CompanionPreferences.DogScalePresets)
-        {
-            double sc = scale;
-            scaleMenu.Items.Add(MakeItem(title, () => prefs.DogScale = sc, Math.Abs(prefs.DogScale - sc) < 0.03));
-        }
-        menu.Items.Add(scaleMenu);
-
-        menu.Items.Add(MakeItem("⚙️ 陪伴偏好设置…", OpenPreferences));
-        menu.Items.Add(new Separator());
-
         var speedMenu = new MenuItem { Header = $"⏱ 网球球速: {prefs.TennisSpeed.ShortName()}" };
         foreach (var spd in Enum.GetValues<TennisGameSpeed>())
         {
@@ -702,8 +666,77 @@ public partial class OverlayWindow : Window
         menu.Items.Add(speedMenu);
 
         menu.Items.Add(new Separator());
-        menu.Items.Add(MakeItem(sp == PetSpecies.GoldenCat ? "🐟 喂一条小鱼干" : "🦴 喂一根骨头饼干", FeedSnack));
-        menu.Items.Add(MakeItem(ForceQuietSleep ? "☀️ 取消固定趴睡" : "💤 安静趴睡模式", ToggleQuietSleep));
+
+        // 4. Quick Position Move
+        menu.Items.Add(MakeItem("📍 移到当前窗口正上方", () => MoveToZone(PerchZone.WindowTop)));
+        menu.Items.Add(MakeItem("👀 移到屏幕右侧边", MoveToRightEdge));
+
+        menu.Items.Add(new Separator());
+
+        // 5. Pet Species Switch in its own standalone section!
+        var speciesMenu = new MenuItem { Header = $"🎭 切换宠物: {sp.ShortName()}" };
+        foreach (var cand in Enum.GetValues<PetSpecies>())
+        {
+            var c = cand;
+            speciesMenu.Items.Add(MakeItem(c.DisplayName(), () => prefs.PetSpecies = c, c == sp));
+        }
+        menu.Items.Add(speciesMenu);
+
+        menu.Items.Add(new Separator());
+
+        // 5. All Settings grouped cleanly under Level-2 Submenu!
+        var settingsMenu = new MenuItem { Header = "⚙️ 设置" };
+
+        var perchMenu = new MenuItem { Header = "🧭 陪伴位置偏好" };
+        foreach (var pp in Enum.GetValues<PerchPreference>())
+        {
+            var p = pp;
+            perchMenu.Items.Add(MakeItem(p.DisplayName(), () => { prefs.PerchPreference = p; SummonToActiveWindow(); }, p == prefs.PerchPreference));
+        }
+        settingsMenu.Items.Add(perchMenu);
+
+        var delayMenu = new MenuItem { Header = $"🕵️ 换窗等待: {CompanionPreferences.FormatDuration(prefs.WindowSwitchDelaySeconds)}" };
+        foreach (var (title, secs) in CompanionPreferences.SwitchDelayPresets)
+        {
+            double s = secs;
+            delayMenu.Items.Add(MakeItem(title, () => prefs.WindowSwitchDelaySeconds = s, Math.Abs(prefs.WindowSwitchDelaySeconds - s) < 0.1));
+        }
+        settingsMenu.Items.Add(delayMenu);
+
+        string climbLabel = prefs.ClimbToTopEnabled ? CompanionPreferences.FormatDuration(prefs.ClimbToTopIntervalSeconds) : "已关闭";
+        var climbMenu = new MenuItem { Header = $"🐾 爬顶等待: {climbLabel}" };
+        foreach (var (title, en, secs) in CompanionPreferences.ClimbIntervalPresets)
+        {
+            bool enabled = en;
+            double s = secs;
+            bool sel = enabled ? (prefs.ClimbToTopEnabled && Math.Abs(prefs.ClimbToTopIntervalSeconds - s) < 0.5) : !prefs.ClimbToTopEnabled;
+            climbMenu.Items.Add(MakeItem(title, () => { prefs.ClimbToTopEnabled = enabled; if (enabled) prefs.ClimbToTopIntervalSeconds = s; }, sel));
+        }
+        settingsMenu.Items.Add(climbMenu);
+
+        string effectLabel = prefs.TopEffectsEnabled ? CompanionPreferences.FormatDuration(prefs.TopEffectIntervalSeconds) : "已关闭";
+        var effectMenu = new MenuItem { Header = $"✨ 特效间隔: {effectLabel}" };
+        foreach (var (title, en, secs) in CompanionPreferences.EffectIntervalPresets)
+        {
+            bool enabled = en;
+            double s = secs;
+            bool sel = enabled ? (prefs.TopEffectsEnabled && Math.Abs(prefs.TopEffectIntervalSeconds - s) < 0.5) : !prefs.TopEffectsEnabled;
+            effectMenu.Items.Add(MakeItem(title, () => { prefs.TopEffectsEnabled = enabled; if (enabled) prefs.TopEffectIntervalSeconds = s; }, sel));
+        }
+        settingsMenu.Items.Add(effectMenu);
+
+        var scaleMenu = new MenuItem { Header = $"📏 宠物大小: {CompanionPreferences.FormatScale(prefs.DogScale)}" };
+        foreach (var (title, scale) in CompanionPreferences.DogScalePresets)
+        {
+            double sc = scale;
+            scaleMenu.Items.Add(MakeItem(title, () => prefs.DogScale = sc, Math.Abs(prefs.DogScale - sc) < 0.03));
+        }
+        settingsMenu.Items.Add(scaleMenu);
+
+        settingsMenu.Items.Add(new Separator());
+        settingsMenu.Items.Add(MakeItem("⚙️ 陪伴偏好设置…", OpenPreferences));
+        menu.Items.Add(settingsMenu);
+
         menu.Items.Add(new Separator());
         menu.Items.Add(MakeItem("退出 Westie Desk Pet", () => System.Windows.Application.Current.Shutdown()));
 

@@ -13,9 +13,9 @@ public sealed class CompanionPreferences
     [
         ("立即跟随 (0 秒)", 0),
         ("3 秒", 3),
-        ("5 秒 (默认)", 5),
+        ("5 秒", 5),
         ("10 秒", 10),
-        ("15 秒", 15)
+        ("15 秒 (默认)", 15)
     ];
 
     public static readonly (string Title, bool Enabled, double Seconds)[] ClimbIntervalPresets =
@@ -23,33 +23,52 @@ public sealed class CompanionPreferences
         ("3 秒 (快速测试)", true, 3),
         ("15 秒", true, 15),
         ("30 秒", true, 30),
-        ("1 分钟 (默认)", true, 60),
+        ("1 分钟", true, 60),
+        ("3 分钟", true, 180),
+        ("5 分钟 (默认)", true, 300),
+        ("10 分钟", true, 600),
+        ("15 分钟", true, 900),
+        ("30 分钟", true, 1800),
+        ("45 分钟", true, 2700),
+        ("60 分钟 (1 小时)", true, 3600),
+        ("关闭自动爬顶", false, 300)
+    ];
+
+    public static readonly (string Title, bool Enabled, double Seconds)[] EffectIntervalPresets =
+    [
+        ("5 秒 (快速测试)", true, 5),
+        ("15 秒", true, 15),
+        ("45 秒", true, 45),
         ("3 分钟", true, 180),
         ("5 分钟", true, 300),
-        ("关闭自动爬顶", false, 60)
+        ("15 分钟 (默认)", true, 900),
+        ("30 分钟", true, 1800),
+        ("1 小时", true, 3600),
+        ("关闭定时特效", false, 900)
     ];
 
     public static readonly (string Title, double Scale)[] DogScalePresets =
     [
         ("迷你 (75%)", 0.75),
-        ("标准 (100% 默认)", 1.0),
+        ("标准 (100%)", 1.0),
         ("大只 (125%)", 1.25),
-        ("超大 (150%)", 1.50)
+        ("超大 (150% 默认)", 1.50)
     ];
 
     private sealed class PersistedDto
     {
-        public double WindowSwitchDelaySeconds { get; set; } = 5.0;
+        public double WindowSwitchDelaySeconds { get; set; } = 15.0;
         public bool ClimbToTopEnabled { get; set; } = true;
-        public double ClimbToTopIntervalSeconds { get; set; } = 60.0;
-        public double GreetingDurationSeconds { get; set; } = 10.0;
+        public double ClimbToTopIntervalSeconds { get; set; } = 300.0;
+        public bool TopEffectsEnabled { get; set; } = true;
+        public double TopEffectIntervalSeconds { get; set; } = 900.0;
+        public List<TopBarEffect>? EnabledTopEffects { get; set; }
         public bool ShyRetreatEnabled { get; set; } = true;
         public bool TypingPauseEnabled { get; set; } = true;
         public bool ClimbPawsPeekEnabled { get; set; } = true;
-        public double DogScale { get; set; } = 1.0;
+        public double DogScale { get; set; } = 1.50;
         public List<TopTapPose>? TopTapEnabledPoses { get; set; }
         public PetSpecies PetSpecies { get; set; } = PetSpecies.Westie;
-        public TopClimbRoutine TopClimbRoutine { get; set; } = TopClimbRoutine.ClassicStory;
         public PerchPreference PerchPreference { get; set; } = PerchPreference.Auto;
         public TennisGameSpeed TennisSpeed { get; set; } = TennisGameSpeed.Slow;
         public TennisDifficulty TennisDifficulty { get; set; } = TennisDifficulty.Casual;
@@ -64,17 +83,18 @@ public sealed class CompanionPreferences
     private readonly string? _storagePath;
     private bool _suppressSave;
 
-    private double _windowSwitchDelaySeconds = 5.0;
+    private double _windowSwitchDelaySeconds = 15.0;
     private bool _climbToTopEnabled = true;
-    private double _climbToTopIntervalSeconds = 60.0;
-    private double _greetingDurationSeconds = 10.0;
+    private double _climbToTopIntervalSeconds = 300.0;
+    private bool _topEffectsEnabled = true;
+    private double _topEffectIntervalSeconds = 900.0;
+    private HashSet<TopBarEffect> _enabledTopEffects = new(TopBarEffectExtensions.DefaultSelection);
     private bool _shyRetreatEnabled = true;
     private bool _typingPauseEnabled = true;
     private bool _climbPawsPeekEnabled = true;
-    private double _dogScale = 1.0;
+    private double _dogScale = 1.50;
     private HashSet<TopTapPose> _topTapEnabledPoses = new(TopTapPoseExtensions.DefaultSelection);
     private PetSpecies _petSpecies = PetSpecies.Westie;
-    private TopClimbRoutine _topClimbRoutine = TopClimbRoutine.ClassicStory;
     private PerchPreference _perchPreference = PerchPreference.Auto;
     private TennisGameSpeed _tennisSpeed = TennisGameSpeed.Slow;
     private TennisDifficulty _tennisDifficulty = TennisDifficulty.Casual;
@@ -112,13 +132,51 @@ public sealed class CompanionPreferences
     public double ClimbToTopIntervalSeconds
     {
         get => _climbToTopIntervalSeconds;
-        set { _climbToTopIntervalSeconds = Math.Clamp(value, 3, 600); NotifyAndSave(); }
+        set { _climbToTopIntervalSeconds = Math.Clamp(value, 3, 3600); NotifyAndSave(); }
     }
 
-    public double GreetingDurationSeconds
+    public bool TopEffectsEnabled
     {
-        get => _greetingDurationSeconds;
-        set { _greetingDurationSeconds = Math.Clamp(value, 4, 30); NotifyAndSave(); }
+        get => _topEffectsEnabled;
+        set { _topEffectsEnabled = value; NotifyAndSave(); }
+    }
+
+    public double TopEffectIntervalSeconds
+    {
+        get => _topEffectIntervalSeconds;
+        set { _topEffectIntervalSeconds = Math.Clamp(value, 5, 3600); NotifyAndSave(); }
+    }
+
+    public IReadOnlyList<TopBarEffect> OrderedEnabledTopEffects
+    {
+        get
+        {
+            var list = Enum.GetValues<TopBarEffect>().Where(e => _enabledTopEffects.Contains(e)).ToList();
+            return list.Count > 0 ? list : [TopBarEffect.Patrol];
+        }
+    }
+
+    public bool IsTopEffectEnabled(TopBarEffect effect) => _enabledTopEffects.Contains(effect);
+
+    public void SetTopEffect(TopBarEffect effect, bool enabled)
+    {
+        if (enabled)
+        {
+            _enabledTopEffects.Add(effect);
+            NotifyAndSave();
+        }
+        else if (_enabledTopEffects.Count > 1 && _enabledTopEffects.Remove(effect))
+        {
+            NotifyAndSave();
+        }
+    }
+
+    public void SetEnabledTopEffects(IEnumerable<TopBarEffect> effects)
+    {
+        var set = new HashSet<TopBarEffect>(effects);
+        if (set.Count == 0) set.Add(TopBarEffect.Patrol);
+        _enabledTopEffects = set;
+        NotifyAndSave();
     }
 
     public bool ShyRetreatEnabled
@@ -149,12 +207,6 @@ public sealed class CompanionPreferences
     {
         get => _petSpecies;
         set { _petSpecies = value; NotifyAndSave(); }
-    }
-
-    public TopClimbRoutine TopClimbRoutine
-    {
-        get => _topClimbRoutine;
-        set { _topClimbRoutine = value; NotifyAndSave(); }
     }
 
     public PerchPreference PerchPreference
@@ -202,17 +254,18 @@ public sealed class CompanionPreferences
     public void ResetToDefaults()
     {
         _suppressSave = true;
-        _windowSwitchDelaySeconds = 5.0;
+        _windowSwitchDelaySeconds = 15.0;
         _climbToTopEnabled = true;
-        _climbToTopIntervalSeconds = 60.0;
-        _greetingDurationSeconds = 10.0;
+        _climbToTopIntervalSeconds = 300.0;
+        _topEffectsEnabled = true;
+        _topEffectIntervalSeconds = 900.0;
+        _enabledTopEffects = new HashSet<TopBarEffect>(TopBarEffectExtensions.DefaultSelection);
         _shyRetreatEnabled = true;
         _typingPauseEnabled = true;
         _climbPawsPeekEnabled = true;
-        _dogScale = 1.0;
+        _dogScale = 1.50;
         _topTapEnabledPoses = new HashSet<TopTapPose>(TopTapPoseExtensions.DefaultSelection);
         _petSpecies = PetSpecies.Westie;
-        _topClimbRoutine = TopClimbRoutine.ClassicStory;
         _perchPreference = PerchPreference.Auto;
         _tennisSpeed = TennisGameSpeed.Slow;
         _tennisDifficulty = TennisDifficulty.Casual;
@@ -224,6 +277,8 @@ public sealed class CompanionPreferences
     {
         int rounded = (int)Math.Round(seconds);
         if (rounded == 0) return "立即";
+        if (rounded >= 3600 && rounded % 3600 == 0) return $"{rounded / 3600} 小时";
+        if (rounded > 3600) return $"{rounded / 3600} 小时 {(rounded % 3600) / 60} 分钟";
         if (rounded >= 60 && rounded % 60 == 0) return $"{rounded / 60} 分钟";
         if (rounded > 60) return $"{rounded / 60} 分 {rounded % 60} 秒";
         return $"{rounded} 秒";
@@ -245,8 +300,11 @@ public sealed class CompanionPreferences
             _suppressSave = true;
             _windowSwitchDelaySeconds = Math.Clamp(dto.WindowSwitchDelaySeconds, 0, 30);
             _climbToTopEnabled = dto.ClimbToTopEnabled;
-            _climbToTopIntervalSeconds = Math.Clamp(dto.ClimbToTopIntervalSeconds, 3, 600);
-            _greetingDurationSeconds = Math.Clamp(dto.GreetingDurationSeconds, 4, 30);
+            _climbToTopIntervalSeconds = Math.Clamp(dto.ClimbToTopIntervalSeconds, 3, 3600);
+            _topEffectsEnabled = dto.TopEffectsEnabled;
+            _topEffectIntervalSeconds = Math.Clamp(dto.TopEffectIntervalSeconds, 5, 3600);
+            if (dto.EnabledTopEffects is { Count: > 0 })
+                _enabledTopEffects = new HashSet<TopBarEffect>(dto.EnabledTopEffects);
             _shyRetreatEnabled = dto.ShyRetreatEnabled;
             _typingPauseEnabled = dto.TypingPauseEnabled;
             _climbPawsPeekEnabled = dto.ClimbPawsPeekEnabled;
@@ -254,7 +312,6 @@ public sealed class CompanionPreferences
             if (dto.TopTapEnabledPoses is { Count: > 0 })
                 _topTapEnabledPoses = new HashSet<TopTapPose>(dto.TopTapEnabledPoses);
             _petSpecies = dto.PetSpecies;
-            _topClimbRoutine = dto.TopClimbRoutine;
             _perchPreference = dto.PerchPreference;
             _tennisSpeed = dto.TennisSpeed;
             _tennisDifficulty = dto.TennisDifficulty;
@@ -285,14 +342,15 @@ public sealed class CompanionPreferences
                 WindowSwitchDelaySeconds = _windowSwitchDelaySeconds,
                 ClimbToTopEnabled = _climbToTopEnabled,
                 ClimbToTopIntervalSeconds = _climbToTopIntervalSeconds,
-                GreetingDurationSeconds = _greetingDurationSeconds,
+                TopEffectsEnabled = _topEffectsEnabled,
+                TopEffectIntervalSeconds = _topEffectIntervalSeconds,
+                EnabledTopEffects = OrderedEnabledTopEffects.ToList(),
                 ShyRetreatEnabled = _shyRetreatEnabled,
                 TypingPauseEnabled = _typingPauseEnabled,
                 ClimbPawsPeekEnabled = _climbPawsPeekEnabled,
                 DogScale = _dogScale,
                 TopTapEnabledPoses = OrderedEnabledTopTapPoses.ToList(),
                 PetSpecies = _petSpecies,
-                TopClimbRoutine = _topClimbRoutine,
                 PerchPreference = _perchPreference,
                 TennisSpeed = _tennisSpeed,
                 TennisDifficulty = _tennisDifficulty

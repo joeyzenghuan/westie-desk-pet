@@ -9,29 +9,26 @@ namespace WestieDeskPet.Windows.UI;
 public partial class PreferencesWindow : Window
 {
     private readonly CompanionPreferences _prefs;
-    private readonly Action _onPreviewClimb;
-    private readonly Action _onPreviewFlashStep;
+    private readonly Action _onPreviewPeek;
+    private readonly Action<TopBarEffect> _onPlayEffect;
     private readonly Action _onPerchChanged;
     private bool _isLoading;
 
     public PreferencesWindow(
         CompanionPreferences prefs,
-        Action onPreviewClimb,
-        Action onPreviewFlashStep,
+        Action onPreviewPeek,
+        Action<TopBarEffect> onPlayEffect,
         Action onPerchChanged)
     {
         _prefs = prefs;
-        _onPreviewClimb = onPreviewClimb;
-        _onPreviewFlashStep = onPreviewFlashStep;
+        _onPreviewPeek = onPreviewPeek;
+        _onPlayEffect = onPlayEffect;
         _onPerchChanged = onPerchChanged;
 
         InitializeComponent();
 
         foreach (var pp in Enum.GetValues<PerchPreference>())
             PerchPreferenceCombo.Items.Add(new ComboBoxItem { Content = pp.DisplayName(), Tag = pp });
-
-        foreach (var rt in Enum.GetValues<TopClimbRoutine>())
-            ClimbRoutineCombo.Items.Add(new ComboBoxItem { Content = rt.DisplayName(), Tag = rt });
 
         SyncFromPreferences();
         _prefs.Changed += OnExternalPrefsChanged;
@@ -47,6 +44,8 @@ public partial class PreferencesWindow : Window
         {
             WestieRadio.IsChecked = _prefs.PetSpecies == PetSpecies.Westie;
             CatRadio.IsChecked = _prefs.PetSpecies == PetSpecies.GoldenCat;
+            LabradorRadio.IsChecked = _prefs.PetSpecies == PetSpecies.Labrador;
+            ChinchillaRadio.IsChecked = _prefs.PetSpecies == PetSpecies.Chinchilla;
 
             ScaleSlider.Value = _prefs.DogScale;
             ScaleValueText.Text = CompanionPreferences.FormatScale(_prefs.DogScale);
@@ -55,13 +54,25 @@ public partial class PreferencesWindow : Window
             SwitchDelayText.Text = CompanionPreferences.FormatDuration(_prefs.WindowSwitchDelaySeconds);
 
             SelectComboTag(PerchPreferenceCombo, _prefs.PerchPreference);
-            SelectComboTag(ClimbRoutineCombo, _prefs.TopClimbRoutine);
 
             ClimbEnabledCheck.IsChecked = _prefs.ClimbToTopEnabled;
             ClimbIntervalSlider.Value = _prefs.ClimbToTopIntervalSeconds;
             ClimbIntervalText.Text = CompanionPreferences.FormatDuration(_prefs.ClimbToTopIntervalSeconds);
             ClimbIntervalSlider.IsEnabled = _prefs.ClimbToTopEnabled;
-            ClimbRoutineCombo.IsEnabled = _prefs.ClimbToTopEnabled;
+
+            TopEffectsEnabledCheck.IsChecked = _prefs.TopEffectsEnabled;
+            EffectIntervalSlider.Value = _prefs.TopEffectIntervalSeconds;
+            EffectIntervalText.Text = CompanionPreferences.FormatDuration(_prefs.TopEffectIntervalSeconds);
+            EffectIntervalSlider.IsEnabled = _prefs.TopEffectsEnabled;
+
+            EffectPatrolCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.Patrol);
+            EffectFlashCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.FlashStep);
+            EffectBearCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.BearShake);
+            EffectKickCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.WandererKick);
+            EffectHeadTiltCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.HeadTilt);
+            EffectRollCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.WindowRoll);
+            EffectSleepCheck.IsChecked = _prefs.IsTopEffectEnabled(TopBarEffect.YawnSleep);
+            UpdateEffectCheckboxGuards();
 
             TapSitCheck.IsChecked = _prefs.IsTopTapPoseEnabled(TopTapPose.SitSmile);
             TapLoafCheck.IsChecked = _prefs.IsTopTapPoseEnabled(TopTapPose.LoafCalm);
@@ -91,6 +102,19 @@ public partial class PreferencesWindow : Window
         }
     }
 
+    private void UpdateEffectCheckboxGuards()
+    {
+        bool masterOn = _prefs.TopEffectsEnabled;
+        int count = _prefs.OrderedEnabledTopEffects.Count;
+        EffectPatrolCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.Patrol));
+        EffectFlashCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.FlashStep));
+        EffectBearCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.BearShake));
+        EffectKickCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.WandererKick));
+        EffectHeadTiltCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.HeadTilt));
+        EffectRollCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.WindowRoll));
+        EffectSleepCheck.IsEnabled = masterOn && !(count == 1 && _prefs.IsTopEffectEnabled(TopBarEffect.YawnSleep));
+    }
+
     private void UpdateTapCheckboxGuards()
     {
         int count = _prefs.OrderedEnabledTopTapPoses.Count;
@@ -103,7 +127,10 @@ public partial class PreferencesWindow : Window
     private void PetSpeciesRadio_Changed(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
-        _prefs.PetSpecies = CatRadio.IsChecked == true ? PetSpecies.GoldenCat : PetSpecies.Westie;
+        if (CatRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.GoldenCat;
+        else if (LabradorRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.Labrador;
+        else if (ChinchillaRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.Chinchilla;
+        else _prefs.PetSpecies = PetSpecies.Westie;
     }
 
     private void ScaleSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -145,13 +172,6 @@ public partial class PreferencesWindow : Window
         _prefs.ClimbToTopEnabled = ClimbEnabledCheck.IsChecked == true;
     }
 
-    private void ClimbRoutineCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_isLoading) return;
-        if (ClimbRoutineCombo.SelectedItem is ComboBoxItem item && item.Tag is TopClimbRoutine rt)
-            _prefs.TopClimbRoutine = rt;
-    }
-
     private void ClimbIntervalSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_isLoading) return;
@@ -166,6 +186,52 @@ public partial class PreferencesWindow : Window
         {
             _prefs.ClimbToTopEnabled = true;
             _prefs.ClimbToTopIntervalSeconds = secs;
+        }
+    }
+
+    private void TopEffectsEnabledCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        _prefs.TopEffectsEnabled = TopEffectsEnabledCheck.IsChecked == true;
+        UpdateEffectCheckboxGuards();
+    }
+
+    private void EffectIntervalSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isLoading) return;
+        _prefs.TopEffectIntervalSeconds = e.NewValue;
+        EffectIntervalText.Text = CompanionPreferences.FormatDuration(_prefs.TopEffectIntervalSeconds);
+    }
+
+    private void EffectPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button btn &&
+            double.TryParse(btn.Tag?.ToString(), CultureInfo.InvariantCulture, out double secs))
+        {
+            _prefs.TopEffectsEnabled = true;
+            _prefs.TopEffectIntervalSeconds = secs;
+        }
+    }
+
+    private void TopEffect_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        if (sender == EffectPatrolCheck) _prefs.SetTopEffect(TopBarEffect.Patrol, EffectPatrolCheck.IsChecked == true);
+        else if (sender == EffectFlashCheck) _prefs.SetTopEffect(TopBarEffect.FlashStep, EffectFlashCheck.IsChecked == true);
+        else if (sender == EffectBearCheck) _prefs.SetTopEffect(TopBarEffect.BearShake, EffectBearCheck.IsChecked == true);
+        else if (sender == EffectKickCheck) _prefs.SetTopEffect(TopBarEffect.WandererKick, EffectKickCheck.IsChecked == true);
+        else if (sender == EffectHeadTiltCheck) _prefs.SetTopEffect(TopBarEffect.HeadTilt, EffectHeadTiltCheck.IsChecked == true);
+        else if (sender == EffectRollCheck) _prefs.SetTopEffect(TopBarEffect.WindowRoll, EffectRollCheck.IsChecked == true);
+        else if (sender == EffectSleepCheck) _prefs.SetTopEffect(TopBarEffect.YawnSleep, EffectSleepCheck.IsChecked == true);
+        UpdateEffectCheckboxGuards();
+    }
+
+    private void PlayEffect_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button btn &&
+            Enum.TryParse<TopBarEffect>(btn.Tag?.ToString(), out var eff))
+        {
+            _onPlayEffect(eff);
         }
     }
 
@@ -188,7 +254,6 @@ public partial class PreferencesWindow : Window
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e) => _prefs.ResetToDefaults();
-    private void PreviewClimb_Click(object sender, RoutedEventArgs e) => _onPreviewClimb();
-    private void PreviewFlash_Click(object sender, RoutedEventArgs e) => _onPreviewFlashStep();
+    private void PreviewPeek_Click(object sender, RoutedEventArgs e) => _onPreviewPeek();
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

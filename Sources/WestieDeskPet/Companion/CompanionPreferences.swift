@@ -10,40 +10,58 @@ public final class CompanionPreferences: ObservableObject {
         static let windowSwitchDelay = "westie.companion.v04.windowSwitchDelaySeconds"
         static let climbToTopEnabled = "westie.companion.v04.climbToTopEnabled"
         static let climbToTopInterval = "westie.companion.v04.climbToTopIntervalSeconds"
-        static let greetingDuration = "westie.companion.v04.greetingDurationSeconds"
+        static let topEffectsEnabled = "westie.companion.v05.topEffectsEnabled"
+        static let topEffectInterval = "westie.companion.v05.topEffectIntervalSeconds"
+        static let enabledTopEffects = "westie.companion.v05.enabledTopEffects"
         static let shyRetreatEnabled = "westie.companion.v04.shyRetreatEnabled"
         static let typingPauseEnabled = "westie.companion.v04.typingPauseEnabled"
         static let climbPawsPeekEnabled = "westie.companion.v04.climbPawsPeekEnabled"
         static let dogScale = "westie.companion.v04.dogScale"
         static let topTapPoses = "westie.companion.v04.topTapPoses"
         static let petSpecies = "westie.companion.v05.petSpecies"
-        static let topClimbRoutine = "westie.companion.v05.topClimbRoutine"
         static let perchPreference = "westie.companion.perchPreference"
     }
 
+    public static let effectIntervalPresets: [(title: String, enabled: Bool, seconds: TimeInterval)] = [
+        ("5 秒 (快速测试)", true, 5),
+        ("15 秒", true, 15),
+        ("45 秒", true, 45),
+        ("3 分钟", true, 180),
+        ("5 分钟", true, 300),
+        ("15 分钟 (默认)", true, 900),
+        ("30 分钟", true, 1800),
+        ("1 小时", true, 3600),
+        ("关闭定时特效", false, 900)
+    ]
+
     public static let dogScalePresets: [(title: String, scale: Double)] = [
         ("迷你 (75%)", 0.75),
-        ("标准 (100% 默认)", 1.0),
+        ("标准 (100%)", 1.0),
         ("大只 (125%)", 1.25),
-        ("超大 (150%)", 1.50)
+        ("超大 (150% 默认)", 1.50)
     ]
 
     public static let switchDelayPresets: [(title: String, seconds: TimeInterval)] = [
         ("立即跟随 (0 秒)", 0),
         ("3 秒", 3),
-        ("5 秒 (默认)", 5),
+        ("5 秒", 5),
         ("10 秒", 10),
-        ("15 秒", 15)
+        ("15 秒 (默认)", 15)
     ]
 
     public static let climbIntervalPresets: [(title: String, enabled: Bool, seconds: TimeInterval)] = [
         ("3 秒 (快速测试)", true, 3),
         ("15 秒", true, 15),
         ("30 秒", true, 30),
-        ("1 分钟 (默认)", true, 60),
+        ("1 分钟", true, 60),
         ("3 分钟", true, 180),
-        ("5 分钟", true, 300),
-        ("关闭自动爬顶", false, 60)
+        ("5 分钟 (默认)", true, 300),
+        ("10 分钟", true, 600),
+        ("15 分钟", true, 900),
+        ("30 分钟", true, 1800),
+        ("45 分钟", true, 2700),
+        ("60 分钟 (1 小时)", true, 3600),
+        ("关闭自动爬顶", false, 300)
     ]
 
     private let defaults: UserDefaults
@@ -69,7 +87,7 @@ public final class CompanionPreferences: ObservableObject {
 
     @Published public var climbToTopIntervalSeconds: TimeInterval {
         didSet {
-            let clamped = min(max(climbToTopIntervalSeconds, 3), 600)
+            let clamped = min(max(climbToTopIntervalSeconds, 3), 3600)
             if clamped != climbToTopIntervalSeconds {
                 climbToTopIntervalSeconds = clamped
                 return
@@ -79,15 +97,51 @@ public final class CompanionPreferences: ObservableObject {
         }
     }
 
-    @Published public var greetingDurationSeconds: TimeInterval {
+    @Published public var topEffectsEnabled: Bool {
         didSet {
-            let clamped = min(max(greetingDurationSeconds, 4), 30)
-            if clamped != greetingDurationSeconds {
-                greetingDurationSeconds = clamped
+            defaults.set(topEffectsEnabled, forKey: Keys.topEffectsEnabled)
+            onChanged?()
+        }
+    }
+
+    @Published public var topEffectIntervalSeconds: TimeInterval {
+        didSet {
+            let clamped = min(max(topEffectIntervalSeconds, 5), 3600)
+            if clamped != topEffectIntervalSeconds {
+                topEffectIntervalSeconds = clamped
                 return
             }
-            defaults.set(clamped, forKey: Keys.greetingDuration)
+            defaults.set(clamped, forKey: Keys.topEffectInterval)
             onChanged?()
+        }
+    }
+
+    @Published public var enabledTopEffects: Set<TopBarEffect> {
+        didSet {
+            if enabledTopEffects.isEmpty {
+                enabledTopEffects = [.patrol]
+                return
+            }
+            let rawValues = TopBarEffect.allCases.filter { enabledTopEffects.contains($0) }.map(\.rawValue)
+            defaults.set(rawValues, forKey: Keys.enabledTopEffects)
+            onChanged?()
+        }
+    }
+
+    public var orderedEnabledTopEffects: [TopBarEffect] {
+        let enabled = TopBarEffect.allCases.filter { enabledTopEffects.contains($0) }
+        return enabled.isEmpty ? [.patrol] : enabled
+    }
+
+    public func isTopEffectEnabled(_ effect: TopBarEffect) -> Bool {
+        enabledTopEffects.contains(effect)
+    }
+
+    public func setTopEffect(_ effect: TopBarEffect, enabled: Bool) {
+        if enabled {
+            enabledTopEffects.insert(effect)
+        } else if enabledTopEffects.count > 1 {
+            enabledTopEffects.remove(effect)
         }
     }
 
@@ -160,13 +214,6 @@ public final class CompanionPreferences: ObservableObject {
         }
     }
 
-    @Published public var topClimbRoutine: TopClimbRoutine {
-        didSet {
-            defaults.set(topClimbRoutine.rawValue, forKey: Keys.topClimbRoutine)
-            onChanged?()
-        }
-    }
-
     @Published public var perchPreference: PerchPreference {
         didSet {
             defaults.set(perchPreference.rawValue, forKey: Keys.perchPreference)
@@ -182,7 +229,7 @@ public final class CompanionPreferences: ObservableObject {
         if defaults.object(forKey: Keys.windowSwitchDelay) != nil {
             self.windowSwitchDelaySeconds = min(max(defaults.double(forKey: Keys.windowSwitchDelay), 0), 30)
         } else {
-            self.windowSwitchDelaySeconds = 5.0
+            self.windowSwitchDelaySeconds = 15.0
         }
 
         if defaults.object(forKey: Keys.climbToTopEnabled) != nil {
@@ -192,15 +239,28 @@ public final class CompanionPreferences: ObservableObject {
         }
 
         if defaults.object(forKey: Keys.climbToTopInterval) != nil {
-            self.climbToTopIntervalSeconds = min(max(defaults.double(forKey: Keys.climbToTopInterval), 3), 600)
+            self.climbToTopIntervalSeconds = min(max(defaults.double(forKey: Keys.climbToTopInterval), 3), 3600)
         } else {
-            self.climbToTopIntervalSeconds = 60.0
+            self.climbToTopIntervalSeconds = 300.0
         }
 
-        if defaults.object(forKey: Keys.greetingDuration) != nil {
-            self.greetingDurationSeconds = min(max(defaults.double(forKey: Keys.greetingDuration), 4), 30)
+        if defaults.object(forKey: Keys.topEffectsEnabled) != nil {
+            self.topEffectsEnabled = defaults.bool(forKey: Keys.topEffectsEnabled)
         } else {
-            self.greetingDurationSeconds = 10.0
+            self.topEffectsEnabled = true
+        }
+
+        if defaults.object(forKey: Keys.topEffectInterval) != nil {
+            self.topEffectIntervalSeconds = min(max(defaults.double(forKey: Keys.topEffectInterval), 5), 3600)
+        } else {
+            self.topEffectIntervalSeconds = 900.0
+        }
+
+        if let savedEffects = defaults.stringArray(forKey: Keys.enabledTopEffects) {
+            let parsed = Set(savedEffects.compactMap(TopBarEffect.init(rawValue:)))
+            self.enabledTopEffects = parsed.isEmpty ? Set(TopBarEffect.defaultEnabled) : parsed
+        } else {
+            self.enabledTopEffects = Set(TopBarEffect.defaultEnabled)
         }
 
         if defaults.object(forKey: Keys.shyRetreatEnabled) != nil {
@@ -224,7 +284,7 @@ public final class CompanionPreferences: ObservableObject {
         if defaults.object(forKey: Keys.dogScale) != nil {
             self.dogScale = min(max(defaults.double(forKey: Keys.dogScale), 0.60), 1.60)
         } else {
-            self.dogScale = 1.0
+            self.dogScale = 1.50
         }
 
         if let savedPoses = defaults.stringArray(forKey: Keys.topTapPoses) {
@@ -240,14 +300,6 @@ public final class CompanionPreferences: ObservableObject {
             self.petSpecies = sp
         } else {
             self.petSpecies = .westie
-        }
-
-        if let savedRoutine = defaults.string(forKey: Keys.topClimbRoutine),
-           let rt = TopClimbRoutine(rawValue: savedRoutine)
-        {
-            self.topClimbRoutine = rt
-        } else {
-            self.topClimbRoutine = .classicStory
         }
 
         if let savedPref = defaults.string(forKey: Keys.perchPreference) {
@@ -266,17 +318,18 @@ public final class CompanionPreferences: ObservableObject {
     }
 
     public func resetToDefaults() {
-        windowSwitchDelaySeconds = 5.0
+        windowSwitchDelaySeconds = 15.0
         climbToTopEnabled = true
-        climbToTopIntervalSeconds = 60.0
-        greetingDurationSeconds = 10.0
+        climbToTopIntervalSeconds = 300.0
+        topEffectsEnabled = true
+        topEffectIntervalSeconds = 900.0
+        enabledTopEffects = Set(TopBarEffect.defaultEnabled)
         shyRetreatEnabled = true
         typingPauseEnabled = true
         climbPawsPeekEnabled = true
-        dogScale = 1.0
+        dogScale = 1.50
         topTapEnabledPoses = Set(TopTapPose.defaultSelection)
         petSpecies = .westie
-        topClimbRoutine = .classicStory
         perchPreference = .auto
     }
 
@@ -288,6 +341,12 @@ public final class CompanionPreferences: ObservableObject {
         let rounded = Int(seconds.rounded())
         if rounded == 0 {
             return "立即"
+        }
+        if rounded >= 3600 && rounded % 3600 == 0 {
+            return "\(rounded / 3600) 小时"
+        }
+        if rounded > 3600 {
+            return "\(rounded / 3600) 小时 \((rounded % 3600) / 60) 分钟"
         }
         if rounded >= 60 && rounded % 60 == 0 {
             return "\(rounded / 60) 分钟"

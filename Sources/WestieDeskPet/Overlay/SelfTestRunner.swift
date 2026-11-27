@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -19,13 +20,17 @@ public enum SelfTestRunner {
 
         print("Running WestieDeskPet Self-Test Suite...")
 
-        // 1. Bundled Sprite Assets check: 100% parity for BOTH Westie (43 sprites) and Golden Shaded Cat (39 pet sprites)!
+        // 1. Bundled Sprite Assets check: 100% parity for Westie (72), Golden Cat (68), & Labrador (67 + shared)!
         let totalExpected = SpriteAssetKey.allCases.count
         let missingWestie = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .westie) }
-        expect(missingWestie.isEmpty && totalExpected == 43, "All \(totalExpected) Westie + shared PNG sprites resolve from bundle (missing: \(missingWestie.map(\.rawValue)))")
+        expect(missingWestie.isEmpty && totalExpected == 72, "All \(totalExpected) Westie + shared PNG sprites resolve from bundle (missing: \(missingWestie.map(\.rawValue)))")
         let catPetKeys = SpriteAssetKey.allCases.filter(\.isPetSpecific)
         let missingCat = catPetKeys.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .goldenCat) }
-        expect(missingCat.isEmpty && catPetKeys.count == 39, "All \(catPetKeys.count) Golden Shaded Cat sprites (incl. dried fish & eating) resolve with 100% parity (missing: \(missingCat.map { $0.resourceName(for: .goldenCat) }))")
+        expect(missingCat.isEmpty && catPetKeys.count == 68, "All \(catPetKeys.count) Golden Shaded Cat sprites (100% parity across all effects) resolve from bundle (missing: \(missingCat.map { $0.resourceName(for: .goldenCat) }))")
+        let missingLab = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .labrador) }
+        expect(missingLab.isEmpty, "All \(totalExpected) Cream-Yellow Labrador sprites (100% parity across all effects & tennis) resolve from bundle (missing: \(missingLab.map { $0.resourceName(for: .labrador) }))")
+        let missingChinchilla = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .chinchilla) }
+        expect(missingChinchilla.isEmpty, "All \(totalExpected) Silver Chinchilla Persian cat sprites (100% parity across all effects & tennis) resolve from bundle (missing: \(missingChinchilla.map { $0.resourceName(for: .chinchilla) }))")
 
         // 2. Window Platform Occlusion & Dock Fallback
         let screen = CGRect(x: 0, y: 60, width: 1440, height: 840)
@@ -134,9 +139,55 @@ public enum SelfTestRunner {
         expect(TennisGameSpeed.slow.faster() == .medium && TennisGameSpeed.medium.slower() == .slow, "Tennis speed +/- controls step cleanly between presets")
         let scene = DesktopScene(size: CGSize(width: 1440, height: 900))
         let ctxMenu = scene.buildDogContextMenu()
+        let topTitles = ctxMenu.items.map(\.title)
+        let idxPeek = topTitles.firstIndex(where: { $0 == "👀 探头张望" })
+        let idxSleepEffect = topTitles.firstIndex(where: { $0 == "😴 打哈欠睡觉" })
+        let idxFeed = topTitles.firstIndex(where: { $0.contains("喂") })
+        let idxQuiet = topTitles.firstIndex(where: { $0.contains("趴睡") })
+        let idxTennis = topTitles.firstIndex(where: { $0.contains("开始打网球") })
+        let idxSpeed = topTitles.firstIndex(where: { $0.contains("网球球速") })
+        let idxMoveRight = topTitles.firstIndex(where: { $0 == "👀 移到屏幕右侧边" })
+        let idxSpecies = topTitles.firstIndex(where: { $0.contains("切换宠物") })
+        let hasSeparatorBeforeSpecies = (idxMoveRight != nil && idxSpecies != nil && idxSpecies! == idxMoveRight! + 2 && ctxMenu.items[idxMoveRight! + 1].isSeparatorItem)
+        let settingsMenu = ctxMenu.items.first(where: { $0.title.contains("设置") && $0.submenu != nil })?.submenu
         expect(
-            ctxMenu.items.count >= 8 && ctxMenu.items.contains(where: { $0.title.contains("立即预览爬顶") }),
-            "Right-click context menu constructs rich menu items including quick climb preview"
+            idxPeek == 0
+                && topTitles.contains("🐾 跳走巡逻")
+                && topTitles.contains("🐻 狗熊哆嗦毛")
+                && topTitles.contains("⚽ 浪子踢球")
+                && topTitles.contains("🥺 歪头杀")
+                && topTitles.contains("🌀 翻肚皮打滚")
+                && idxSleepEffect != nil && idxFeed != nil && idxQuiet != nil
+                && idxFeed! > idxSleepEffect! && idxQuiet! == idxFeed! + 1
+                && idxTennis != nil && idxSpeed != nil && idxSpeed! == idxTennis! + 1
+                && hasSeparatorBeforeSpecies
+                && settingsMenu != nil && settingsMenu!.items.contains(where: { $0.title.contains("爬顶等待") }),
+            "Right-click menu places clean effect labels on Level 1, snack/sleep next, tennis+speed together, species standalone, settings in Level-2"
+        )
+        let routingPanel = OverlayPanel(
+            contentRect: CGRect(x: 0, y: 0, width: 200, height: 200),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        var remappedTypes: [NSEvent.EventType] = []
+        routingPanel.onRemappedSecondaryClickEvent = { event in
+            remappedTypes.append(event.type)
+            return true
+        }
+        func syntheticLeftClick(buttonNumber: Int64) -> [NSEvent] {
+            [CGEventType.leftMouseDown, .leftMouseUp].compactMap { type in
+                let cg = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: CGPoint(x: 50, y: 50), mouseButton: .left)
+                // CGEvent normalizes left-type events to button 0, so stamp the remapped button explicitly
+                cg?.setIntegerValueField(.mouseEventButtonNumber, value: buttonNumber)
+                return cg.flatMap { NSEvent(cgEvent: $0) }
+            }
+        }
+        syntheticLeftClick(buttonNumber: 0).forEach { routingPanel.sendEvent($0) }
+        syntheticLeftClick(buttonNumber: 1).forEach { routingPanel.sendEvent($0) }
+        expect(
+            remappedTypes == [.leftMouseDown, .leftMouseUp],
+            "Right button re-posted as leftMouseDown/Up (buttonNumber 1) routes to context menu; plain left taps don't"
         )
 
         // 10. v0.3 Silky Smoothness: DampedSpring, Tap-vs-Drag Zero-Jump, & O(1) Single-Window Layout
@@ -186,10 +237,20 @@ public enum SelfTestRunner {
         let testDefaults = UserDefaults(suiteName: testSuiteName)!
         defer { testDefaults.removePersistentDomain(forName: testSuiteName) }
         let testPrefs = CompanionPreferences(defaults: testDefaults)
+        expect(
+            testPrefs.perchPreference == .auto
+                && testPrefs.windowSwitchDelaySeconds == 15.0
+                && testPrefs.climbToTopIntervalSeconds == 300.0
+                && testPrefs.topEffectIntervalSeconds == 900.0
+                && abs(testPrefs.dogScale - 1.50) < 0.001,
+            "Fresh default preferences match v1.0 release defaults (screen-right, 15s switch, 5m climb, 15m effect, 150% scale)"
+        )
         testPrefs.windowSwitchDelaySeconds = 5.0
         testPrefs.climbToTopEnabled = true
         testPrefs.climbToTopIntervalSeconds = 60.0
-        testPrefs.greetingDurationSeconds = 10.0
+        testPrefs.topEffectsEnabled = true
+        testPrefs.topEffectIntervalSeconds = 12.0
+        testPrefs.enabledTopEffects = Set(TopBarEffect.allCases)
         testPrefs.shyRetreatEnabled = true
         testPrefs.typingPauseEnabled = true
         testPrefs.climbPawsPeekEnabled = true
@@ -348,47 +409,109 @@ public enum SelfTestRunner {
         }
         expect(defaultAutoDog.perchZone == .screenRightPeek, "Typing-pause defers screen-right-to-top climb while user is actively typing")
 
-        // User stops typing -> Westie stealth-climbs from screen right edge onto window B's top bar!
+        // User stops typing -> Westie stealth-climbs from screen right edge onto window B's top bar,
+        // looks left & right, and stays seamlessly in initial head-on-ledge forward pose (`.chinRest`)!
         var sawTopPeek3s = false
+        var landedInInitialChinRest = false
+        for _ in 0..<120 { // 6 seconds covering retract -> hidden -> 3s left/right peek -> resting forward pose
+            defaultAutoDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .stealthTransition(let phase, _, let dest, _, _) = defaultAutoDog.state,
+               case .tentativePeek(_, let dur) = phase, dest.perchZone == .windowTop, dur >= 2.9
+            {
+                sawTopPeek3s = true
+            }
+            if defaultAutoDog.perchZone == .windowTop, case .chinRest = defaultAutoDog.state {
+                landedInInitialChinRest = true
+                break
+            }
+        }
+        expect(
+            sawTopPeek3s && landedInInitialChinRest,
+            "Default climb to top bar peeks left/right then stays in head-on-ledge forward resting pose (.chinRest)"
+        )
+
+        // Independent Effect 1: `.patrol` (hop left + look around + walk right -> smile sit -> calm sit, NO auto yawn/sleep!)
+        defaultAutoDog.triggerTopBarEffect(.patrol, snapshot: snapB, sceneSize: sceneSize)
+        var sawRisingFromPeek = false
         var sawHopLeft = false
         var sawLookAround = false
         var sawWalkRight = false
         var sawSmileSit = false
-        var sawPreYawnWait = false
-        var sawYawn = false
-        var sawSettlingToSleep = false
-        var sawSleepingAfterYawn = false
-        for _ in 0..<900 { // 45 seconds covering the full unhurried story arc with pauses!
+        var patrolEndedInCalmSit = false
+        var patrolTriggeredYawn = false
+        for _ in 0..<420 { // 21s
             defaultAutoDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
             switch defaultAutoDog.state {
-            case .stealthTransition(let phase, _, let dest, _, _):
-                if case .tentativePeek(_, let dur) = phase, dest.perchZone == .windowTop, dur >= 2.9 {
-                    sawTopPeek3s = true
-                }
             case .topStory(let step):
                 switch step {
+                case .risingToFullBody: sawRisingFromPeek = true
                 case .hopLeft: sawHopLeft = true
                 case .lookAroundPause: if sawHopLeft { sawLookAround = true }
                 case .walkRight: if sawLookAround { sawWalkRight = true }
                 case .smileSit: if sawWalkRight { sawSmileSit = true }
-                case .preYawnWait: if sawSmileSit { sawPreYawnWait = true }
-                case .postClimbPause, .postWalkPause, .flashStep: break
+                case .postClimbPause, .postWalkPause, .flashStep, .bearShake, .wandererKick, .headTilt, .bellyRoll: break
                 }
             case .yawning:
-                if sawPreYawnWait { sawYawn = true }
-            case .settlingToSleep:
-                if sawYawn { sawSettlingToSleep = true }
-            case .sleeping:
-                if sawSettlingToSleep {
-                    sawSleepingAfterYawn = true
-                }
+                patrolTriggeredYawn = true
+            case .sitCalm:
+                if sawSmileSit { patrolEndedInCalmSit = true }
             default:
                 break
             }
+            if patrolEndedInCalmSit { break }
+        }
+        expect(
+            sawRisingFromPeek && sawHopLeft && sawLookAround && sawWalkRight && sawSmileSit && patrolEndedInCalmSit && !patrolTriggeredYawn,
+            "Independent Patrol effect rises from peek -> hop LEFT -> look around -> walk RIGHT -> smile -> calm sit (decoupled from sleep)"
+        )
+
+        // Independent Effect 3: `.yawnSleep` (yawn -> drowsy -> sleep)
+        defaultAutoDog.triggerTopBarEffect(.yawnSleep, snapshot: snapB, sceneSize: sceneSize)
+        var sawYawn = false
+        var sawSettlingToSleep = false
+        var sawSleepingAfterYawn = false
+        for _ in 0..<240 { // 12s
+            defaultAutoDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            switch defaultAutoDog.state {
+            case .yawning: sawYawn = true
+            case .settlingToSleep: if sawYawn { sawSettlingToSleep = true }
+            case .sleeping: if sawSettlingToSleep { sawSleepingAfterYawn = true }
+            default: break
+            }
             if sawSleepingAfterYawn { break }
         }
-        expect(sawTopPeek3s && sawHopLeft && sawLookAround && sawWalkRight, "Story arc plays 3s head peek -> hop LEFT -> look around -> walk RIGHT")
-        expect(sawSmileSit && sawPreYawnWait && sawYawn && sawSettlingToSleep && sawSleepingAfterYawn, "After walking right, Westie smiles & sways head -> pauses -> yawns -> drowsy -> sleeps")
+        expect(
+            sawYawn && sawSettlingToSleep && sawSleepingAfterYawn,
+            "Independent Yawn & Sleep effect plays yawn -> drowsy -> sleep cleanly on demand"
+        )
+
+        // Periodic auto-effect trigger: resting in initial `.chinRest` for `topEffectIntervalSeconds` auto-plays an enabled effect!
+        testPrefs.topEffectsEnabled = true
+        testPrefs.topEffectIntervalSeconds = 5.0
+        testPrefs.enabledTopEffects = [.flashStep]
+        let autoEffectDog = CompanionController(preferences: testPrefs, ownPID: 777)
+        autoEffectDog.placeInitially(snapshot: snapB, sceneSize: sceneSize)
+        autoEffectDog.moveImmediatelyToZone(.windowTop, snapshot: snapB, sceneSize: sceneSize)
+        var periodicEffectFired = false
+        for _ in 0..<240 { // 12s (3s initial peek + 5s wait + rise + flashStep)
+            autoEffectDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .flashStep) = autoEffectDog.state {
+                periodicEffectFired = true
+                break
+            }
+        }
+        testPrefs.topEffectIntervalSeconds = 3600.0
+        let supportsOneHour = (testPrefs.topEffectIntervalSeconds == 3600.0
+            && CompanionPreferences.formatDuration(900) == "15 分钟"
+            && CompanionPreferences.formatDuration(1800) == "30 分钟"
+            && CompanionPreferences.formatDuration(3600) == "1 小时")
+        testPrefs.topEffectIntervalSeconds = 5.0
+        expect(supportsOneHour, "Top-bar effect interval supports 15min / 30min / 1 hour presets and formatting")
+        expect(
+            periodicEffectFired,
+            "Periodic topEffectIntervalSeconds automatically triggers an enabled top-bar effect from resting initial pose"
+        )
+        testPrefs.enabledTopEffects = Set(TopBarEffect.allCases)
 
         // Unified top-bar mouse interaction: hover does NOT wake sleeping dog or mutate state;
         // tapping cycles cleanly through user's enabled poses (default: sitSmile -> loafCalm -> bigHeadPeek)!
@@ -454,10 +577,13 @@ public enum SelfTestRunner {
         )
         expect(!extLayout.isFullScreenMode && extLayout.topPerch != nil && extLayout.windowRightPeek != nil, "Secondary display without menu bar detects normal windowed top & right perches")
 
-        // (b) `perchPreference == .rightPeek` with `climbToTopEnabled == true` (minimum 3s!) STILL climbs to top after 3s!
+        // (b) `perchPreference == .rightPeek` with `climbToTopEnabled == true` (3s..3600s!) STILL climbs to top after 3s!
         testPrefs.perchPreference = .rightPeek
+        testPrefs.climbToTopIntervalSeconds = 3600.0
+        let climbSupports1Hour = (testPrefs.climbToTopIntervalSeconds == 3600.0
+            && CompanionPreferences.formatDuration(2700) == "45 分钟")
         testPrefs.climbToTopIntervalSeconds = 3.0
-        expect(testPrefs.climbToTopIntervalSeconds == 3.0, "Climb-to-top interval supports 3-second minimum for fast testing")
+        expect(testPrefs.climbToTopIntervalSeconds == 3.0 && climbSupports1Hour, "Climb-to-top interval supports 3s minimum up to 60min (1 hour)")
         let rightPrefDog = CompanionController(preferences: testPrefs, ownPID: 777)
         rightPrefDog.placeInitially(snapshot: snapB, sceneSize: sceneSize)
         var rightPrefClimbed = false
@@ -524,39 +650,106 @@ public enum SelfTestRunner {
             "Entering Full-Screen from windowTop ducks smoothly in-place (zero corner teleport) then emerges on screen right bezel"
         )
 
-        // (f) v0.5 Golden Shaded Cat mode + 5-step "闪身步" (Flash-Step) dance routine verification!
+        // (f) v0.5.2 Golden Shaded Cat + independent 8-frame "闪身步" (counter-lean split + pinned-foot flat glide + deadpan freeze)!
         testPrefs.petSpecies = .goldenCat
-        testPrefs.topClimbRoutine = .flashStep
         testPrefs.perchPreference = .auto
         let catDog = CompanionController(preferences: testPrefs, ownPID: 777)
         catDog.placeInitially(snapshot: snapB, sceneSize: sceneSize)
-        let targetTopX = snapB.perchLayout.topPerch?.midX ?? 900
-        catDog.beginStealthClimbToTop(targetX: targetTopX, windowID: 302, climbToGreet: true, routineOverride: .flashStep)
-        var sawStance = false
-        var sawDodgeRight = false
-        var sawStopMid = false
-        var sawReadyLeft = false
-        var sawDodgeLeft = false
-        var sawFlashSleep = false
-        for _ in 0..<700 { // 35 seconds covering climb + 2 rounds of 闪身步 + smile + yawn + sleep
+        catDog.triggerTopBarEffect(.flashStep, snapshot: snapB, sceneSize: sceneSize)
+        var sawSplitL = false
+        var sawGlideL = false
+        var sawSnapL = false
+        var sawFreezeL = false
+        var sawSplitR = false
+        var sawGlideR = false
+        var sawSnapR = false
+        var sawFlashDone = false
+        for _ in 0..<500 { // 25 seconds covering climb + 2 rounds of 8-frame 闪身步 + proud smile -> calm sit
             catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
-            if case .topStory(step: .flashStep(_, let beat)) = catDog.state {
+            if case .topStory(step: .flashStep(_, _, _, let beat)) = catDog.state {
                 switch beat {
-                case .stance: sawStance = true
-                case .dodgeRight: if sawStance { sawDodgeRight = true }
-                case .stopMid: if sawDodgeRight { sawStopMid = true }
-                case .readyLeft: if sawStopMid { sawReadyLeft = true }
-                case .dodgeLeft: if sawReadyLeft { sawDodgeLeft = true }
-                case .finishStop: break
+                case .splitFeintLeft: sawSplitL = true
+                case .glideWideLeft: if sawSplitL { sawGlideL = true }
+                case .snapCloseLeft: if sawGlideL { sawSnapL = true }
+                case .statueFreezeLeft: if sawSnapL { sawFreezeL = true }
+                case .splitFeintRight: if sawFreezeL { sawSplitR = true }
+                case .glideWideRight: if sawSplitR { sawGlideR = true }
+                case .snapCloseRight: if sawGlideR { sawSnapR = true }
+                case .holdStart, .popLeft, .popRight, .statueFinish: break
                 }
-            } else if case .sleeping = catDog.state, sawDodgeLeft {
-                sawFlashSleep = true
+            } else if case .sitCalm = catDog.state, sawSnapR {
+                sawFlashDone = true
                 break
             }
         }
         expect(
-            sawStance && sawDodgeRight && sawStopMid && sawReadyLeft && sawDodgeLeft && sawFlashSleep,
-            "Golden Cat + 闪身步 plays full 5-beat dance (起势→往右闪→停→准备→再往左闪) then yawns to sleep"
+            sawSplitL && sawGlideL && sawSnapL && sawFreezeL && sawSplitR && sawGlideR && sawSnapR && sawFlashDone,
+            "Golden Cat + independent 8-frame 闪身步 plays full authentic split-feint -> pinned-foot glide -> snap -> freeze L/R -> calm sit"
+        )
+
+        // (f2) All 4 new independent effects end-to-end: 狗熊哆嗦毛, 浪子踢球, 歪头杀, & 窗顶打滚 (right -> left -> right)!
+        catDog.triggerTopBarEffect(.bearShake, snapshot: snapB, sceneSize: sceneSize)
+        var sawBear7 = false
+        var bearDone = false
+        for _ in 0..<260 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .bearShake(_, _, let idx, _)) = catDog.state, idx == 7 { sawBear7 = true }
+            else if case .sitCalm = catDog.state, sawBear7 { bearDone = true; break }
+        }
+        catDog.triggerTopBarEffect(.wandererKick, snapshot: snapB, sceneSize: sceneSize)
+        var sawKickMirror = false
+        var kickDone = false
+        for _ in 0..<260 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .wandererKick(_, let mirror, let idx, _)) = catDog.state, mirror < 0, idx == 4 { sawKickMirror = true }
+            else if case .sitCalm = catDog.state, sawKickMirror { kickDone = true; break }
+        }
+        catDog.triggerTopBarEffect(.headTilt, snapshot: snapB, sceneSize: sceneSize)
+        var sawHeroTilt = false
+        var tiltDone = false
+        for _ in 0..<180 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .headTilt(let idx, _)) = catDog.state, idx == 10 { sawHeroTilt = true }
+            else if case .sitCalm = catDog.state, sawHeroTilt { tiltDone = true; break }
+        }
+        catDog.triggerTopBarEffect(.windowRoll, snapshot: snapB, sceneSize: sceneSize)
+        var reachedBellyWaitSideA = false
+        for _ in 0..<20 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .bellyRoll(phase: .waitingBellyUp, sideSign: let side)) = catDog.state, side > 0 {
+                reachedBellyWaitSideA = true
+                break
+            }
+        }
+        // Wait 6s (< 10s), then click pet -> MUST flip smoothly to opposite side (`sideSign < 0`) and reset 10s timer!
+        for _ in 0..<120 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+        }
+        let bellyClickPt = CGPoint(x: catDog.position.x, y: catDog.position.y + 20)
+        _ = catDog.handleMouseDown(at: bellyClickPt)
+        catDog.handleMouseUp(at: bellyClickPt, snapshot: snapB, sceneSize: sceneSize)
+        var sawRollingOver = false
+        var flippedToSideB = false
+        for _ in 0..<40 {
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .topStory(step: .bellyRoll(let phase, let side)) = catDog.state {
+                if case .rollingOver = phase { sawRollingOver = true }
+                if case .waitingBellyUp = phase, side < 0 { flippedToSideB = true; break }
+            }
+        }
+        // Wait > 10s with NO click -> stands back up into calm `.sitCalm` and ends the round!
+        var bellyEndedAfter10s = false
+        for _ in 0..<230 { // 11.5s
+            catDog.update(dt: 0.05, snapshot: snapB, sceneSize: sceneSize)
+            if case .sitCalm = catDog.state {
+                bellyEndedAfter10s = true
+                break
+            }
+        }
+        expect(
+            sawBear7 && bearDone && sawKickMirror && kickDone && sawHeroTilt && tiltDone
+                && reachedBellyWaitSideA && sawRollingOver && flippedToSideB && bellyEndedAfter10s,
+            "All 4 new effects (狗熊哆嗦毛, 浪子踢球 L/R, 歪头杀, interactive 10s 翻肚皮打滚 click-to-flip) play end-to-end cleanly"
         )
 
         // (g) Species-matched snack feeding & eating animation (`chasingTreat` -> `eatingTreat` -> `sitCalm`)
@@ -575,6 +768,51 @@ public enum SelfTestRunner {
         expect(
             sawEatingTreat && finishedEatingToSit && SpriteAssetKey.boneTreat.resourceName(for: .goldenCat) == "dried_fish_treat",
             "Golden Cat uses dried_fish_treat snack and plays full chase -> chewing eatingTreat -> happy sit animation"
+        )
+
+        // (h) Deadlock regression: perched on `windowTop`, old window loses top headroom while a new front window
+        // touches screen right bezel -> MUST NOT get stuck in `.tuckedWaiting` / `hitRect == .zero` on `.screenRightPeek`!
+        let dlPrefs = CompanionPreferences(defaults: testDefaults)
+        dlPrefs.perchPreference = .auto
+        dlPrefs.windowSwitchDelaySeconds = 5.0
+        let dlDog = CompanionController(preferences: dlPrefs, ownPID: 777)
+        dlDog.placeInitially(snapshot: snapA, sceneSize: sceneSize)
+        dlDog.moveImmediatelyToZone(.windowTop, snapshot: snapA, sceneSize: sceneSize)
+        for _ in 0..<110 {
+            dlDog.update(dt: 0.05, snapshot: snapA, sceneSize: sceneSize)
+        }
+        // Old window 301 is pushed flush to menu bar (no topPerch!), while new front window 304 touches screen right edge
+        let winAFlushTop = RawWindowInfo(windowID: 301, ownerPID: 500, ownerName: "BrowserA", frame: CGRect(x: 80, y: 120, width: 600, height: 780), isFrontmostApp: false)
+        let winDRightFlush = RawWindowInfo(windowID: 304, ownerPID: 509, ownerName: "RightApp", frame: CGRect(x: 700, y: 100, width: 740, height: 740), isFrontmostApp: true)
+        let layoutD = PlatformPhysics.computeActiveWindowPerchLayout(
+            windowsFrontToBack: [winDRightFlush, winAFlushTop],
+            screenSize: sceneSize,
+            visibleScreenFrame: screen,
+            excludedPID: 777
+        )
+        let snapD = ActiveWorkspaceSnapshot(
+            platforms: [],
+            perchLayout: layoutD,
+            windowsFrontToBack: [winDRightFlush, winAFlushTop],
+            windowFramesByID: [301: winAFlushTop.frame, 304: winDRightFlush.frame],
+            screenSize: sceneSize,
+            visibleScreenFrame: screen,
+            frontmostAppName: "RightApp",
+            frontmostBundleID: "com.test.rightapp",
+            isMeetingActive: false,
+            isCodingActive: false,
+            secondsSinceLastKeyDown: 10.0
+        )
+        for _ in 0..<25 {
+            dlDog.update(dt: 0.05, snapshot: snapD, sceneSize: sceneSize)
+        }
+        let stuckInTucked: Bool = {
+            if case .tuckedWaiting = dlDog.state { return true }
+            return false
+        }()
+        expect(
+            dlDog.perchZone == .screenRightPeek && !stuckInTucked && dlDog.interactiveHitRect() != .zero,
+            "Fallback from windowTop to screenRightPeek while occluded never deadlocks in hidden tuckedWaiting state"
         )
 
         print("Self-test summary: \(passed) passed, \(failed) failed.")

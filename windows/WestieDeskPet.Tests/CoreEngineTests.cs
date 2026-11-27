@@ -67,16 +67,26 @@ public sealed class CoreEngineTests
         var missingWestie = SpriteAssetCatalog.AllKeys
             .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.Westie) + ".png")))
             .ToList();
-        Assert.Equal(43, SpriteAssetCatalog.AllKeys.Count);
+        Assert.Equal(72, SpriteAssetCatalog.AllKeys.Count);
         Assert.Empty(missingWestie);
 
         var catKeys = SpriteAssetCatalog.AllKeys.Where(SpriteAssetCatalog.IsPetSpecific).ToList();
         var missingCat = catKeys
             .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.GoldenCat) + ".png")))
             .ToList();
-        Assert.Equal(39, catKeys.Count);
+        Assert.Equal(68, catKeys.Count);
         Assert.Empty(missingCat);
+        var missingLab = SpriteAssetCatalog.AllKeys
+            .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.Labrador) + ".png")))
+            .ToList();
+        Assert.Empty(missingLab);
+        var missingChinchilla = SpriteAssetCatalog.AllKeys
+            .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.Chinchilla) + ".png")))
+            .ToList();
+        Assert.Empty(missingChinchilla);
         Assert.Equal("dried_fish_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.GoldenCat));
+        Assert.Equal("dried_fish_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.Chinchilla));
+        Assert.Equal("bone_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.Labrador));
     }
 
     [Fact]
@@ -122,10 +132,18 @@ public sealed class CoreEngineTests
     public void DefaultScreenRightModeAndOptInWindowRightStealthDwellWork()
     {
         var (snapA, snapB, snapC, _, sceneSize) = BuildFixtures();
+        var freshDefaults = new CompanionPreferences(storagePath: null);
+        Assert.Equal(PerchPreference.Auto, freshDefaults.PerchPreference);
+        Assert.Equal(15.0, freshDefaults.WindowSwitchDelaySeconds);
+        Assert.Equal(300.0, freshDefaults.ClimbToTopIntervalSeconds);
+        Assert.Equal(900.0, freshDefaults.TopEffectIntervalSeconds);
+        Assert.Equal(1.50, freshDefaults.DogScale, 3);
+
         var prefs = new CompanionPreferences(storagePath: null)
         {
             WindowSwitchDelaySeconds = 5.0,
-            PerchPreference = PerchPreference.Auto
+            PerchPreference = PerchPreference.Auto,
+            DogScale = 1.0
         };
 
         var autoPet = new CompanionEngine(prefs, ownPid: 777);
@@ -202,7 +220,7 @@ public sealed class CoreEngineTests
     }
 
     [Fact]
-    public void ClassicStoryArcTypingPauseAndCustomizableTopTapPosesWork()
+    public void InitialPeekPoseIndependentEffectsPeriodicTriggerAndTapPosesWork()
     {
         var (_, snapB, _, _, sceneSize) = BuildFixtures();
         var snapTyping = new ActiveWorkspaceSnapshot(
@@ -214,7 +232,8 @@ public sealed class CoreEngineTests
             PerchPreference = PerchPreference.Auto,
             ClimbToTopEnabled = true,
             ClimbToTopIntervalSeconds = 3.0,
-            TopClimbRoutine = TopClimbRoutine.ClassicStory,
+            TopEffectsEnabled = true,
+            TopEffectIntervalSeconds = 15.0,
             TypingPauseEnabled = true
         };
         Assert.Equal(3.0, prefs.ClimbToTopIntervalSeconds);
@@ -226,23 +245,49 @@ public sealed class CoreEngineTests
         for (int i = 0; i < 100; i++) pet.Update(0.05, snapTyping, sceneSize);
         Assert.Equal(PerchZone.ScreenRightPeek, pet.PerchZone);
 
-        // Stop typing -> full story arc: 3s peek -> hopLeft -> lookAround -> walkRight -> smileSit -> preYawn -> yawn -> drowsy -> sleep!
-        bool sawHop = false, sawLook = false, sawWalkR = false, sawSmile = false, sawYawn = false, sawDrowsy = false, sawSleep = false;
-        for (int i = 0; i < 900; i++)
+        // Stop typing -> climbs to top, peeks left/right, and rests seamlessly in head-on-ledge forward pose (ChinRest)!
+        bool landedInChinRest = false;
+        for (int i = 0; i < 160; i++)
+        {
+            pet.Update(0.05, snapB, sceneSize);
+            if (pet.PerchZone == PerchZone.WindowTop && pet.StateKind == CompanionStateKind.ChinRest)
+            {
+                landedInChinRest = true;
+                break;
+            }
+        }
+        Assert.True(landedInChinRest);
+
+        // Independent Effect 1: Patrol (rises from peek -> hopLeft -> lookAround -> walkRight -> smileSit -> calm SitCalm, NO auto yawn!)
+        pet.TriggerTopBarEffect(TopBarEffect.Patrol, snapB, sceneSize);
+        bool sawRise = false, sawHop = false, sawLook = false, sawWalkR = false, sawSmile = false, patrolFinishedSit = false, sawUnwantedYawn = false;
+        for (int i = 0; i < 420; i++)
         {
             pet.Update(0.05, snapB, sceneSize);
             if (pet.StateKind == CompanionStateKind.TopStory)
             {
+                if (pet.TopStoryStep == TopStoryStepKind.RisingToFullBody) sawRise = true;
                 if (pet.TopStoryStep == TopStoryStepKind.HopLeft) sawHop = true;
                 if (pet.TopStoryStep == TopStoryStepKind.LookAroundPause && sawHop) sawLook = true;
                 if (pet.TopStoryStep == TopStoryStepKind.WalkRight && sawLook) sawWalkR = true;
                 if (pet.TopStoryStep == TopStoryStepKind.SmileSit && sawWalkR) sawSmile = true;
             }
-            else if (pet.StateKind == CompanionStateKind.Yawning && sawSmile) sawYawn = true;
+            else if (pet.StateKind == CompanionStateKind.Yawning) sawUnwantedYawn = true;
+            else if (pet.StateKind == CompanionStateKind.SitCalm && sawSmile) { patrolFinishedSit = true; break; }
+        }
+        Assert.True(sawRise && sawHop && sawLook && sawWalkR && sawSmile && patrolFinishedSit && !sawUnwantedYawn);
+
+        // Independent Effect 3: YawnSleep (yawn -> drowsy -> sleep)
+        pet.TriggerTopBarEffect(TopBarEffect.YawnSleep, snapB, sceneSize);
+        bool sawYawn = false, sawDrowsy = false, sawSleep = false;
+        for (int i = 0; i < 240; i++)
+        {
+            pet.Update(0.05, snapB, sceneSize);
+            if (pet.StateKind == CompanionStateKind.Yawning) sawYawn = true;
             else if (pet.StateKind == CompanionStateKind.SettlingToSleep && sawYawn) sawDrowsy = true;
             else if (pet.StateKind == CompanionStateKind.Sleeping && sawDrowsy) { sawSleep = true; break; }
         }
-        Assert.True(sawHop && sawLook && sawWalkR && sawSmile && sawYawn && sawDrowsy && sawSleep);
+        Assert.True(sawYawn && sawDrowsy && sawSleep);
 
         // Unified top-bar hover does NOT wake sleeping pet; tap cycles sitSmile -> loafCalm -> bigHeadPeek!
         pet.SetHovering(true, pointerSpeed: 60, nearZone: true);
@@ -261,6 +306,32 @@ public sealed class CoreEngineTests
         Assert.True(pet.HandleMouseDown(tapPt));
         pet.HandleMouseUp(tapPt, snapB, sceneSize);
         Assert.Equal(CompanionStateKind.ChinRest, pet.StateKind);
+
+        // Periodic auto-trigger: resting in initial ChinRest for TopEffectIntervalSeconds fires enabled effect!
+        prefs.TopEffectIntervalSeconds = 5.0;
+        prefs.SetEnabledTopEffects([TopBarEffect.FlashStep]);
+        var autoPet = new CompanionEngine(prefs, ownPid: 777);
+        autoPet.PlaceInitially(snapB, sceneSize);
+        autoPet.MoveImmediatelyToZone(PerchZone.WindowTop, snapB, sceneSize);
+        bool autoFired = false;
+        for (int i = 0; i < 240; i++)
+        {
+            autoPet.Update(0.05, snapB, sceneSize);
+            if (autoPet.StateKind == CompanionStateKind.TopStory && autoPet.TopStoryStep == TopStoryStepKind.FlashStep)
+            {
+                autoFired = true;
+                break;
+            }
+        }
+        prefs.ClimbToTopIntervalSeconds = 3600.0;
+        Assert.Equal(3600.0, prefs.ClimbToTopIntervalSeconds);
+        Assert.Equal("45 分钟", CompanionPreferences.FormatDuration(2700));
+        prefs.TopEffectIntervalSeconds = 3600.0;
+        Assert.Equal(3600.0, prefs.TopEffectIntervalSeconds);
+        Assert.Equal("15 分钟", CompanionPreferences.FormatDuration(900));
+        Assert.Equal("30 分钟", CompanionPreferences.FormatDuration(1800));
+        Assert.Equal("1 小时", CompanionPreferences.FormatDuration(3600));
+        Assert.True(autoFired);
     }
 
     [Fact]
@@ -270,34 +341,103 @@ public sealed class CoreEngineTests
         var prefs = new CompanionPreferences(storagePath: null)
         {
             PetSpecies = PetSpecies.GoldenCat,
-            TopClimbRoutine = TopClimbRoutine.FlashStep,
             DogScale = 1.5
         };
         var cat = new CompanionEngine(prefs, ownPid: 777);
         cat.PlaceInitially(snapB, sceneSize);
 
-        double topMid = snapB.PerchLayout.TopPerch!.MidX;
-        cat.BeginStealthClimbToTop(topMid, 302, climbToGreet: true, routineOverride: TopClimbRoutine.FlashStep);
+        cat.TriggerTopBarEffect(TopBarEffect.FlashStep, snapB, sceneSize);
 
-        bool s1 = false, s2 = false, s3 = false, s4 = false, s5 = false, slept = false;
-        for (int i = 0; i < 700; i++)
+        bool s1 = false, s2 = false, s3 = false, s4 = false, s5 = false, s6 = false, s7 = false, flashFinishedToSit = false;
+        for (int i = 0; i < 500; i++)
         {
             cat.Update(0.05, snapB, sceneSize);
             if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.FlashStep)
             {
-                if (cat.FlashStepBeat == FlashStepBeatKind.Stance) s1 = true;
-                if (cat.FlashStepBeat == FlashStepBeatKind.DodgeRight && s1) s2 = true;
-                if (cat.FlashStepBeat == FlashStepBeatKind.StopMid && s2) s3 = true;
-                if (cat.FlashStepBeat == FlashStepBeatKind.ReadyLeft && s3) s4 = true;
-                if (cat.FlashStepBeat == FlashStepBeatKind.DodgeLeft && s4) s5 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.SplitFeintLeft) s1 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.GlideWideLeft && s1) s2 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.SnapCloseLeft && s2) s3 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.StatueFreezeLeft && s3) s4 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.SplitFeintRight && s4) s5 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.GlideWideRight && s5) s6 = true;
+                if (cat.FlashStepBeat == FlashStepBeatKind.SnapCloseRight && s6) s7 = true;
             }
-            else if (cat.StateKind == CompanionStateKind.Sleeping && s5)
+            else if (cat.StateKind == CompanionStateKind.SitCalm && s7)
             {
-                slept = true;
+                flashFinishedToSit = true;
                 break;
             }
         }
-        Assert.True(s1 && s2 && s3 && s4 && s5 && slept);
+        Assert.True(s1 && s2 && s3 && s4 && s5 && s6 && s7 && flashFinishedToSit);
+
+        // New independent effects: BearShake, WandererKick, HeadTilt, and WindowRoll (right -> left -> right)!
+        cat.TriggerTopBarEffect(TopBarEffect.BearShake, snapB, sceneSize);
+        bool sawBear = false, bearDone = false;
+        for (int i = 0; i < 260; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.BearShake) sawBear = true;
+            else if (cat.StateKind == CompanionStateKind.SitCalm && sawBear) { bearDone = true; break; }
+        }
+        Assert.True(sawBear && bearDone);
+
+        cat.TriggerTopBarEffect(TopBarEffect.WandererKick, snapB, sceneSize);
+        bool sawKick = false, kickDone = false;
+        for (int i = 0; i < 260; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.WandererKick) sawKick = true;
+            else if (cat.StateKind == CompanionStateKind.SitCalm && sawKick) { kickDone = true; break; }
+        }
+        Assert.True(sawKick && kickDone);
+
+        cat.TriggerTopBarEffect(TopBarEffect.HeadTilt, snapB, sceneSize);
+        bool sawTilt = false, tiltDone = false;
+        for (int i = 0; i < 180; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.HeadTilt) sawTilt = true;
+            else if (cat.StateKind == CompanionStateKind.SitCalm && sawTilt) { tiltDone = true; break; }
+        }
+        Assert.True(sawTilt && tiltDone);
+
+        cat.TriggerTopBarEffect(TopBarEffect.WindowRoll, snapB, sceneSize);
+        bool reachedWaitA = false;
+        for (int i = 0; i < 20; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.BellyRoll &&
+                cat.BellyRollPhase == BellyRollPhaseKind.WaitingBellyUp && cat.BellyRollSideSign > 0)
+            {
+                reachedWaitA = true;
+                break;
+            }
+        }
+        for (int i = 0; i < 120; i++) cat.Update(0.05, snapB, sceneSize); // 6s < 10s
+        var clickPt = new Vec2(cat.Position.X, cat.Position.Y + 20);
+        Assert.True(cat.HandleMouseDown(clickPt));
+        cat.HandleMouseUp(clickPt, snapB, sceneSize);
+        bool sawFlip = false, flippedSideB = false;
+        for (int i = 0; i < 40; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.TopStory && cat.TopStoryStep == TopStoryStepKind.BellyRoll)
+            {
+                if (cat.BellyRollPhase == BellyRollPhaseKind.RollingOver) sawFlip = true;
+                if (cat.BellyRollPhase == BellyRollPhaseKind.WaitingBellyUp && cat.BellyRollSideSign < 0)
+                {
+                    flippedSideB = true;
+                    break;
+                }
+            }
+        }
+        bool endedAfter10s = false;
+        for (int i = 0; i < 230; i++)
+        {
+            cat.Update(0.05, snapB, sceneSize);
+            if (cat.StateKind == CompanionStateKind.SitCalm) { endedAfter10s = true; break; }
+        }
+        Assert.True(reachedWaitA && sawFlip && flippedSideB && endedAfter10s);
 
         // Feed dried fish -> chase -> chewing eatingTreat -> happy sitCalm!
         cat.DropSnackTreat(snapB, sceneSize);
@@ -310,6 +450,36 @@ public sealed class CoreEngineTests
             else if (cat.StateKind == CompanionStateKind.SitCalm && sawEating) { finishedToSit = true; break; }
         }
         Assert.True(sawEating && finishedToSit);
+    }
+
+    [Fact]
+    public void FallbackToScreenRightWhileOccludedNeverDeadlocksInTuckedWaiting()
+    {
+        var (snapA, _, _, _, sceneSize) = BuildFixtures();
+        var visible = new Rect2D(0, 60, 1440, 840);
+        var prefs = new CompanionPreferences(storagePath: null)
+        {
+            PerchPreference = PerchPreference.Auto,
+            WindowSwitchDelaySeconds = 5.0
+        };
+        var pet = new CompanionEngine(prefs, ownPid: 777);
+        pet.PlaceInitially(snapA, sceneSize);
+        pet.MoveImmediatelyToZone(PerchZone.WindowTop, snapA, sceneSize);
+        for (int i = 0; i < 110; i++) pet.Update(0.05, snapA, sceneSize);
+
+        var winAFlushTop = new RawWindowInfo(301, 500, "Chrome", new Rect2D(80, 120, 600, 780), IsFrontmostApp: false);
+        var winDRightFlush = new RawWindowInfo(304, 509, "RightApp", new Rect2D(700, 100, 740, 740), IsFrontmostApp: true);
+        var layoutD = PlatformPhysics.ComputeActiveWindowPerchLayout([winDRightFlush, winAFlushTop], sceneSize, visible, 777);
+        var snapD = new ActiveWorkspaceSnapshot(
+            [], layoutD, [winDRightFlush, winAFlushTop],
+            new Dictionary<ulong, Rect2D> { [301] = winAFlushTop.Frame, [304] = winDRightFlush.Frame },
+            sceneSize, visible, "RightApp", false, false, 10.0);
+
+        for (int i = 0; i < 25; i++) pet.Update(0.05, snapD, sceneSize);
+
+        Assert.Equal(PerchZone.ScreenRightPeek, pet.PerchZone);
+        Assert.NotEqual(CompanionStateKind.TuckedWaiting, pet.StateKind);
+        Assert.False(pet.InteractiveHitRect().IsEmpty);
     }
 
     [Fact]

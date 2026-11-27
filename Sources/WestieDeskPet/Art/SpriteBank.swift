@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SpriteKit
 
 public enum SpriteAssetKey: String, CaseIterable, Sendable {
@@ -32,12 +33,49 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
     case westieLookLeftHeadCenter = "westie_look_left_head_center"
     case westieLookLeftHeadRight = "westie_look_left_head_right"
 
-    // v0.5 Bipedal Flash-Step Dance ("闪身步": 起势 / 往右闪 / 停 / 准备 / 再往左闪)
+    // v0.5.2 Authentic 8-Frame Bipedal Flash-Step ("闪身步": F56/F60/F66/F70/F73/F102/F107/F110, 192x128 height-locked)
     case westieFlashStep1 = "westie_flash_step_1"
     case westieFlashStep2 = "westie_flash_step_2"
     case westieFlashStep3 = "westie_flash_step_3"
     case westieFlashStep4 = "westie_flash_step_4"
     case westieFlashStep5 = "westie_flash_step_5"
+    case westieFlashStep6 = "westie_flash_step_6"
+    case westieFlashStep7 = "westie_flash_step_7"
+    case westieFlashStep8 = "westie_flash_step_8"
+
+    // v0.5.3 8-Frame "狗熊哆嗦毛" (Bear Fur Shake dance, 192x128 height-locked)
+    case westieBearShake1 = "westie_bear_shake_1"
+    case westieBearShake2 = "westie_bear_shake_2"
+    case westieBearShake3 = "westie_bear_shake_3"
+    case westieBearShake4 = "westie_bear_shake_4"
+    case westieBearShake5 = "westie_bear_shake_5"
+    case westieBearShake6 = "westie_bear_shake_6"
+    case westieBearShake7 = "westie_bear_shake_7"
+    case westieBearShake8 = "westie_bear_shake_8"
+
+    // v0.5.3 6-Frame "浪子踢球" (Wanderer Ball Kick folk dance, 192x128 height-locked)
+    case westieWandererKick1 = "westie_wanderer_kick_1"
+    case westieWandererKick2 = "westie_wanderer_kick_2"
+    case westieWandererKick3 = "westie_wanderer_kick_3"
+    case westieWandererKick4 = "westie_wanderer_kick_4"
+    case westieWandererKick5 = "westie_wanderer_kick_5"
+    case westieWandererKick6 = "westie_wanderer_kick_6"
+
+    // v0.5.4 6-Frame Interactive "翻肚皮打滚" (pose-locked to 打滚.mp4, 128x128)
+    case westieBellyRoll1 = "westie_belly_roll_1"
+    case westieBellyRoll2 = "westie_belly_roll_2"
+    case westieBellyRoll3 = "westie_belly_roll_3"
+    case westieBellyRoll4 = "westie_belly_roll_4"
+    case westieBellyRoll5 = "westie_belly_roll_5"
+    case westieBellyRoll6 = "westie_belly_roll_6"
+
+    // v0.5.3 6-Frame "歪头杀" (Head-Tilt Kill stationary front-facing sit, 128x128)
+    case westieHeadTilt1 = "westie_head_tilt_1"
+    case westieHeadTilt2 = "westie_head_tilt_2"
+    case westieHeadTilt3 = "westie_head_tilt_3"
+    case westieHeadTilt4 = "westie_head_tilt_4"
+    case westieHeadTilt5 = "westie_head_tilt_5"
+    case westieHeadTilt6 = "westie_head_tilt_6"
 
     // v0.5.1 Snack Chewing Animation (Westie chewing bone / Golden Cat chewing dried fish)
     case westieEat1 = "westie_eat_1"
@@ -73,6 +111,25 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
                 return "dried_fish_treat"
             }
             return rawValue
+        case .labrador:
+            if rawValue.hasPrefix("westie_") {
+                return "lab_" + rawValue.dropFirst("westie_".count)
+            }
+            if self == .badgeIcon {
+                return "lab_badge_icon"
+            }
+            return rawValue
+        case .chinchilla:
+            if rawValue.hasPrefix("westie_") {
+                return "chinchilla_" + rawValue.dropFirst("westie_".count)
+            }
+            if self == .badgeIcon {
+                return "chinchilla_badge_icon"
+            }
+            if self == .boneTreat {
+                return "dried_fish_treat"
+            }
+            return rawValue
         }
     }
 
@@ -86,8 +143,52 @@ public final class SpriteBank {
     public static let shared = SpriteBank()
 
     private var cache: [String: SKTexture] = [:]
+    private var preloadedSpecies: Set<PetSpecies> = []
 
     private init() {}
+
+    /// Warms decoded CGImages off the main thread (never calling `SKTexture.preload`, which can stall
+    /// SpriteKit's Metal display link on macOS 26!) and installs crisp nearest-neighbor `SKTexture`s on MainActor.
+    public func preloadSpecies(_ species: PetSpecies) {
+        guard !preloadedSpecies.contains(species) else { return }
+        preloadedSpecies.insert(species)
+
+        var workItems: [(name: String, url: URL)] = []
+        for key in SpriteAssetKey.allCases {
+            let name = key.resourceName(for: species)
+            if cache[name] != nil { continue }
+            if let url = locateSpriteURL(named: name) {
+                workItems.append((name, url))
+            }
+        }
+        guard !workItems.isEmpty else { return }
+        let itemsToDecode = workItems
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var decoded: [(String, CGImage)] = []
+            decoded.reserveCapacity(itemsToDecode.count)
+            let opts: [CFString: Any] = [
+                kCGImageSourceShouldCache: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            for item in itemsToDecode {
+                if let src = CGImageSourceCreateWithURL(item.url as CFURL, nil),
+                   let cg = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary)
+                {
+                    decoded.append((item.name, cg))
+                }
+            }
+            Task { @MainActor in
+                for (name, cg) in decoded {
+                    if self.cache[name] == nil {
+                        let tex = SKTexture(cgImage: cg)
+                        tex.filteringMode = .nearest
+                        self.cache[name] = tex
+                    }
+                }
+            }
+        }
+    }
 
     public func texture(for key: SpriteAssetKey, species: PetSpecies = .westie) -> SKTexture {
         let name = key.resourceName(for: species)
@@ -145,9 +246,21 @@ public final class SpriteBank {
     }
 
     private func loadFromBundle(resourceName: String) -> SKTexture? {
-        guard let url = locateSpriteURL(named: resourceName),
-              let image = NSImage(contentsOf: url)
-        else {
+        guard let url = locateSpriteURL(named: resourceName) else {
+            return nil
+        }
+        // Decode PNG directly into an immediately-cached premultiplied CGImage -> SKTexture(cgImage:)
+        // to avoid NSImage Retina rep overhead & first-frame Metal upload white-flash!
+        if let src = CGImageSourceCreateWithURL(url as CFURL, nil) {
+            let opts: [CFString: Any] = [
+                kCGImageSourceShouldCache: true,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            if let cgImage = CGImageSourceCreateImageAtIndex(src, 0, opts as CFDictionary) {
+                return SKTexture(cgImage: cgImage)
+            }
+        }
+        guard let image = NSImage(contentsOf: url) else {
             return nil
         }
         return SKTexture(image: image)

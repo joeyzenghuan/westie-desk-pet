@@ -22,22 +22,27 @@ import subprocess
 import tempfile
 
 API_VERSION = "2025-04-01-preview"
-DEFAULT_ENDPOINT = "https://jzdm-foundry-swn.openai.azure.com"
-FLARE_DEPLOYMENT = "gpt-image-2.5-flare-globalstandard"
-SUNBURST_DEPLOYMENT = "gpt-image-2.5-sunburst-globalstandard"
+DEFAULT_ENDPOINT = ""
+FLARE_DEPLOYMENT = os.environ.get("AZURE_IMAGE_DEPLOYMENT_A", "gpt-image-2.5-flare-globalstandard")
+SUNBURST_DEPLOYMENT = os.environ.get("AZURE_IMAGE_DEPLOYMENT_B", "gpt-image-2.5-sunburst-globalstandard")
 
 
 def load_api_key(config_ini: str | None) -> tuple[str, str]:
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", DEFAULT_ENDPOINT).rstrip("/")
     api_key = os.environ.get("AZURE_OPENAI_API_KEY", "").strip()
-    if not api_key and config_ini:
+    if (not api_key or not endpoint) and config_ini:
         cfg = configparser.ConfigParser()
         cfg.read(config_ini)
-        if "AOAIEndpoints" in cfg and "jzdm-foundry-swn" in cfg["AOAIEndpoints"]:
-            api_key = cfg["AOAIEndpoints"]["jzdm-foundry-swn"].strip()
-    if not api_key:
+        if "AOAIEndpoints" in cfg and cfg["AOAIEndpoints"]:
+            first_name = next(iter(cfg["AOAIEndpoints"]))
+            if not endpoint:
+                endpoint = f"https://{first_name}.openai.azure.com"
+            if not api_key:
+                api_key = cfg["AOAIEndpoints"][first_name].strip()
+    if not api_key or not endpoint:
         raise RuntimeError(
-            "Missing API key. Set AZURE_OPENAI_API_KEY or pass --config-ini /path/to/.config"
+            "Missing Azure OpenAI endpoint or API key. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, "
+            "or pass --config-ini /path/to/.config"
         )
     return endpoint, api_key
 

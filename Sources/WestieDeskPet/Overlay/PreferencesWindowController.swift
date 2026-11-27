@@ -6,8 +6,8 @@ public final class PreferencesWindowController {
     public static let shared = PreferencesWindowController()
 
     private var window: NSWindow?
-    private var onPreviewClimb: (() -> Void)?
-    private var onPreviewFlashStep: (() -> Void)?
+    private var onPreviewPeek: (() -> Void)?
+    private var onPlayEffect: ((TopBarEffect) -> Void)?
 
     public var isVisible: Bool {
         window?.isVisible ?? false
@@ -17,14 +17,14 @@ public final class PreferencesWindowController {
 
     public func show(
         preferences: CompanionPreferences = .shared,
-        onPreviewClimb: (() -> Void)? = nil,
-        onPreviewFlashStep: (() -> Void)? = nil
+        onPreviewPeek: (() -> Void)? = nil,
+        onPlayEffect: ((TopBarEffect) -> Void)? = nil
     ) {
-        if let onPreviewClimb {
-            self.onPreviewClimb = onPreviewClimb
+        if let onPreviewPeek {
+            self.onPreviewPeek = onPreviewPeek
         }
-        if let onPreviewFlashStep {
-            self.onPreviewFlashStep = onPreviewFlashStep
+        if let onPlayEffect {
+            self.onPlayEffect = onPlayEffect
         }
         if let existing = window {
             NSApp.activate(ignoringOtherApps: true)
@@ -34,11 +34,11 @@ public final class PreferencesWindowController {
 
         let rootView = CompanionPreferencesView(
             preferences: preferences,
-            onPreviewClimb: { [weak self] in
-                self?.onPreviewClimb?()
+            onPreviewPeek: { [weak self] in
+                self?.onPreviewPeek?()
             },
-            onPreviewFlashStep: { [weak self] in
-                self?.onPreviewFlashStep?()
+            onPlayEffect: { [weak self] effect in
+                self?.onPlayEffect?(effect)
             },
             onClose: { [weak self] in
                 self?.window?.close()
@@ -47,7 +47,7 @@ public final class PreferencesWindowController {
         let hostingController = NSHostingController(rootView: rootView)
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 740),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 780),
             styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered,
             defer: false
@@ -67,8 +67,8 @@ public final class PreferencesWindowController {
 
 private struct CompanionPreferencesView: View {
     @ObservedObject var preferences: CompanionPreferences
-    let onPreviewClimb: () -> Void
-    let onPreviewFlashStep: () -> Void
+    let onPreviewPeek: () -> Void
+    let onPlayEffect: (TopBarEffect) -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -79,7 +79,7 @@ private struct CompanionPreferencesView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("当前桌面宠物", selection: $preferences.petSpecies) {
                         ForEach(PetSpecies.allCases) { sp in
-                            Text(sp.displayName).tag(sp)
+                            Text(sp.shortName).tag(sp)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -140,21 +140,13 @@ private struct CompanionPreferencesView: View {
                 .padding(6)
             }
 
-            // Section 2: Right -> Top Climb & Animation Effect
-            GroupBox(label: Label("同窗口专注陪伴与动态特效", systemImage: "pawprint.fill")) {
+            // Section 2: Right -> Top Initial Peek & Periodic Independent Top-Bar Effects
+            GroupBox(label: Label("右侧→顶栏陪伴与独立特效", systemImage: "pawprint.fill")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("停留满时长后自动爬上顶栏互动", isOn: $preferences.climbToTopEnabled)
-
-                    Picker("爬顶动态特效", selection: $preferences.topClimbRoutine) {
-                        ForEach(TopClimbRoutine.allCases) { rt in
-                            Text(rt.displayName).tag(rt)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(!preferences.climbToTopEnabled)
+                    Toggle("从右侧自动爬上窗口顶栏（左看右看后趴窗朝前）", isOn: $preferences.climbToTopEnabled)
 
                     HStack {
-                        Text("爬上顶栏触发间隔")
+                        Text("右侧→顶栏等待时长")
                         Spacer()
                         Text(CompanionPreferences.formatDuration(preferences.climbToTopIntervalSeconds))
                             .font(.system(.body, design: .rounded).weight(.semibold))
@@ -164,40 +156,90 @@ private struct CompanionPreferencesView: View {
 
                     Slider(
                         value: $preferences.climbToTopIntervalSeconds,
-                        in: 3...300,
+                        in: 3...3600,
                         step: 1
                     )
                     .disabled(!preferences.climbToTopEnabled)
 
-                    HStack(spacing: 6) {
-                        ForEach([3.0, 15.0, 30.0, 60.0, 180.0], id: \.self) { secs in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 5) {
+                            ForEach([3.0, 30.0, 60.0, 300.0], id: \.self) { secs in
+                                Button(CompanionPreferences.formatDuration(secs)) {
+                                    preferences.climbToTopEnabled = true
+                                    preferences.climbToTopIntervalSeconds = secs
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+                        }
+                        HStack(spacing: 5) {
+                            ForEach([600.0, 900.0, 1800.0, 2700.0, 3600.0], id: \.self) { secs in
+                                Button(CompanionPreferences.formatDuration(secs)) {
+                                    preferences.climbToTopEnabled = true
+                                    preferences.climbToTopIntervalSeconds = secs
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+                        }
+                    }
+                    .disabled(!preferences.climbToTopEnabled)
+
+                    Divider()
+
+                    Toggle("在顶栏定时触发独立特效", isOn: $preferences.topEffectsEnabled)
+
+                    HStack {
+                        Text("顶栏特效触发间隔")
+                        Spacer()
+                        Text(CompanionPreferences.formatDuration(preferences.topEffectIntervalSeconds))
+                            .font(.system(.body, design: .rounded).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .opacity(preferences.topEffectsEnabled ? 1.0 : 0.45)
+
+                    Slider(
+                        value: $preferences.topEffectIntervalSeconds,
+                        in: 5...3600,
+                        step: 5
+                    )
+                    .disabled(!preferences.topEffectsEnabled)
+
+                    HStack(spacing: 5) {
+                        ForEach([15.0, 45.0, 300.0, 900.0, 1800.0, 3600.0], id: \.self) { secs in
                             Button(CompanionPreferences.formatDuration(secs)) {
-                                preferences.climbToTopEnabled = true
-                                preferences.climbToTopIntervalSeconds = secs
+                                preferences.topEffectsEnabled = true
+                                preferences.topEffectIntervalSeconds = secs
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
                         }
                     }
-                    .disabled(!preferences.climbToTopEnabled)
+                    .disabled(!preferences.topEffectsEnabled)
 
-                    HStack {
-                        Text("上顶互动等待时长")
-                        Spacer()
-                        Text(CompanionPreferences.formatDuration(preferences.greetingDurationSeconds))
-                            .font(.system(.body, design: .rounded).weight(.semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("自动触发包含的独立特效（右键也可单独即时播放）")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
+                        ForEach(TopBarEffect.allCases) { effect in
+                            HStack {
+                                let binding = Binding<Bool>(
+                                    get: { preferences.isTopEffectEnabled(effect) },
+                                    set: { preferences.setTopEffect(effect, enabled: $0) }
+                                )
+                                Toggle(effect.displayName, isOn: binding)
+                                    .disabled(!preferences.topEffectsEnabled || (preferences.isTopEffectEnabled(effect) && preferences.enabledTopEffects.count == 1))
+                                Spacer()
+                                Button("播放") {
+                                    onPlayEffect(effect)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                            }
+                        }
                     }
-                    .opacity(preferences.climbToTopEnabled ? 1.0 : 0.45)
 
-                    Slider(
-                        value: $preferences.greetingDurationSeconds,
-                        in: 5...20,
-                        step: 1
-                    )
-                    .disabled(!preferences.climbToTopEnabled)
-
-                    Text("默认在屏幕右侧边安静探头，不挡应用窗口；在当前窗口停留满时长后会自动爬上顶栏互动，之后打哈欠趴下睡觉。")
+                    Text("爬上顶栏后默认左看右看并保持朝前趴窗姿态；之后按设定间隔随机播放上方勾选的独立特效。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -238,11 +280,11 @@ private struct CompanionPreferencesView: View {
                 Button("恢复默认") {
                     preferences.resetToDefaults()
                 }
-                Button("🐾 预览爬顶") {
-                    onPreviewClimb()
+                Button("👀 预览趴窗") {
+                    onPreviewPeek()
                 }
-                Button("⚡ 预览闪身步") {
-                    onPreviewFlashStep()
+                Button("⚡ 闪身步") {
+                    onPlayEffect(.flashStep)
                 }
                 Spacer()
                 Button("完成") {
@@ -253,6 +295,6 @@ private struct CompanionPreferencesView: View {
         }
         .padding(16)
         }
-        .frame(width: 440, height: 740)
+        .frame(width: 450, height: 780)
     }
 }

@@ -20,14 +20,16 @@
                 <!-- Section 0: Pet Species & Size -->
                 <GroupBox Header="🐾 宠物角色与外观大小" Padding="10" Margin="0,0,0,10">
                     <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                            <RadioButton x:Name="WestieRadio" Content="🐶 西高地小狗" Margin="0,0,18,0" Checked="PetSpeciesRadio_Changed" />
-                            <RadioButton x:Name="CatRadio" Content="🐱 金渐层小猫" Checked="PetSpeciesRadio_Changed" />
-                        </StackPanel>
+                        <UniformGrid Columns="2" Margin="0,0,0,10">
+                            <RadioButton x:Name="WestieRadio" Content="🐶 西高地小狗" Margin="0,0,12,6" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="CatRadio" Content="🐱 金渐层小猫" Margin="0,0,0,6" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="LabradorRadio" Content="🐕 拉布拉多小狗" Margin="0,0,12,0" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="ChinchillaRadio" Content="🐈 金吉拉小猫" Checked="PetSpeciesRadio_Changed" />
+                        </UniformGrid>
 
                         <DockPanel Margin="0,0,0,4">
                             <TextBlock Text="宠物尺寸" DockPanel.Dock="Left" />
-                            <TextBlock x:Name="ScaleValueText" Text="100%" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                            <TextBlock x:Name="ScaleValueText" Text="150%" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
                         </DockPanel>
                         <Slider x:Name="ScaleSlider" Minimum="0.60" Maximum="1.60" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="ScaleSlider_ValueChanged" />
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -44,7 +46,7 @@
                     <StackPanel>
                         <DockPanel Margin="0,0,0,4">
                             <TextBlock Text="切窗等待时长" DockPanel.Dock="Left" />
-                            <TextBlock x:Name="SwitchDelayText" Text="5 秒" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                            <TextBlock x:Name="SwitchDelayText" Text="15 秒" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
                         </DockPanel>
                         <Slider x:Name="SwitchDelaySlider" Minimum="0" Maximum="15" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SwitchDelaySlider_ValueChanged" />
                         <TextBlock Text="当宠物在窗口上方（或开启跟随窗口右侧）时，切到新窗口停留超过该时间才会悄悄切换。" TextWrapping="Wrap" FontSize="11" Foreground="#666" Margin="0,4,0,8" />
@@ -56,30 +58,79 @@
                     </StackPanel>
                 </GroupBox>
 
-                <!-- Section 2: Climb-to-Top & Animation Routine -->
-                <GroupBox Header="🎬 同窗口专注陪伴与动态特效" Padding="10" Margin="0,0,0,10">
+                <!-- Section 2: Right -> Top Initial Peek & Periodic Independent Top-Bar Effects -->
+                <GroupBox Header="🎬 右侧→顶栏陪伴与独立特效" Padding="10" Margin="0,0,0,10">
                     <StackPanel>
-                        <CheckBox x:Name="ClimbEnabledCheck" Content="停留满时长后自动爬上顶栏互动" Margin="0,0,0,8" Checked="ClimbEnabledCheck_Changed" Unchecked="ClimbEnabledCheck_Changed" />
-
-                        <DockPanel Margin="0,0,0,8">
-                            <TextBlock Text="爬顶动态特效" VerticalAlignment="Center" Margin="0,0,10,0" />
-                            <ComboBox x:Name="ClimbRoutineCombo" SelectionChanged="ClimbRoutineCombo_SelectionChanged" />
-                        </DockPanel>
+                        <CheckBox x:Name="ClimbEnabledCheck" Content="从右侧自动爬上窗口顶栏（左看右看后趴窗朝前）" Margin="0,0,0,8" Checked="ClimbEnabledCheck_Changed" Unchecked="ClimbEnabledCheck_Changed" />
 
                         <DockPanel Margin="0,0,0,4">
-                            <TextBlock Text="爬上顶栏触发间隔" DockPanel.Dock="Left" />
-                            <TextBlock x:Name="ClimbIntervalText" Text="1 分钟" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                            <TextBlock Text="右侧→顶栏等待时长" DockPanel.Dock="Left" />
+                            <TextBlock x:Name="ClimbIntervalText" Text="5 分钟" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
                         </DockPanel>
-                        <Slider x:Name="ClimbIntervalSlider" Minimum="3" Maximum="300" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="ClimbIntervalSlider_ValueChanged" />
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,8">
-                            <Button Content="3 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="3" />
-                            <Button Content="15 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="15" />
-                            <Button Content="30 秒" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="30" />
-                            <Button Content="1 分钟" Padding="8,2" Margin="0,0,6,0" Click="ClimbPreset_Click" Tag="60" />
-                            <Button Content="3 分钟" Padding="8,2" Click="ClimbPreset_Click" Tag="180" />
+                        <Slider x:Name="ClimbIntervalSlider" Minimum="3" Maximum="3600" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="ClimbIntervalSlider_ValueChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
+                            <Button Content="3 秒" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="3" />
+                            <Button Content="30 秒" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="30" />
+                            <Button Content="1 分钟" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="60" />
+                            <Button Content="5 分钟" Padding="6,2" Click="ClimbPreset_Click" Tag="300" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="10 分钟" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="600" />
+                            <Button Content="15 分钟" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="900" />
+                            <Button Content="30 分钟" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="1800" />
+                            <Button Content="45 分钟" Padding="6,2" Margin="0,0,5,0" Click="ClimbPreset_Click" Tag="2700" />
+                            <Button Content="1 小时" Padding="6,2" Click="ClimbPreset_Click" Tag="3600" />
                         </StackPanel>
 
-                        <TextBlock Text="默认安静探头在屏幕右侧边；在当前窗口停留满时长后会自动爬上顶栏上演「悠闲巡逻」或「⚡ 闪身步」，之后打哈欠睡觉。" TextWrapping="Wrap" FontSize="11" Foreground="#666" />
+                        <Separator Margin="0,0,0,8" />
+
+                        <CheckBox x:Name="TopEffectsEnabledCheck" Content="在顶栏定时触发独立特效" Margin="0,0,0,8" Checked="TopEffectsEnabledCheck_Changed" Unchecked="TopEffectsEnabledCheck_Changed" />
+
+                        <DockPanel Margin="0,0,0,4">
+                            <TextBlock Text="顶栏特效触发间隔" DockPanel.Dock="Left" />
+                            <TextBlock x:Name="EffectIntervalText" Text="15 分钟" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="#555" />
+                        </DockPanel>
+                        <Slider x:Name="EffectIntervalSlider" Minimum="5" Maximum="3600" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="EffectIntervalSlider_ValueChanged" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,8">
+                            <Button Content="15 秒" Padding="6,2" Margin="0,0,5,0" Click="EffectPreset_Click" Tag="15" />
+                            <Button Content="45 秒" Padding="6,2" Margin="0,0,5,0" Click="EffectPreset_Click" Tag="45" />
+                            <Button Content="5 分钟" Padding="6,2" Margin="0,0,5,0" Click="EffectPreset_Click" Tag="300" />
+                            <Button Content="15 分钟" Padding="6,2" Margin="0,0,5,0" Click="EffectPreset_Click" Tag="900" />
+                            <Button Content="30 分钟" Padding="6,2" Margin="0,0,5,0" Click="EffectPreset_Click" Tag="1800" />
+                            <Button Content="1 小时" Padding="6,2" Click="EffectPreset_Click" Tag="3600" />
+                        </StackPanel>
+
+                        <TextBlock Text="自动触发包含的独立特效（右键一级菜单也可直接点播）" FontSize="11" Foreground="#666" Margin="0,0,0,6" />
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="Patrol" />
+                            <CheckBox x:Name="EffectPatrolCheck" Content="🐾 跳走巡逻" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="FlashStep" />
+                            <CheckBox x:Name="EffectFlashCheck" Content="⚡ 闪身步" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="BearShake" />
+                            <CheckBox x:Name="EffectBearCheck" Content="🐻 狗熊哆嗦毛" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="WandererKick" />
+                            <CheckBox x:Name="EffectKickCheck" Content="⚽ 浪子踢球" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="HeadTilt" />
+                            <CheckBox x:Name="EffectHeadTiltCheck" Content="🥺 歪头杀" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,4">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="WindowRoll" />
+                            <CheckBox x:Name="EffectRollCheck" Content="🌀 翻肚皮打滚" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+                        <DockPanel Margin="0,0,0,6">
+                            <Button Content="播放" DockPanel.Dock="Right" Padding="8,1" Click="PlayEffect_Click" Tag="YawnSleep" />
+                            <CheckBox x:Name="EffectSleepCheck" Content="😴 打哈欠睡觉" VerticalAlignment="Center" Checked="TopEffect_Changed" Unchecked="TopEffect_Changed" />
+                        </DockPanel>
+
+                        <TextBlock Text="爬上顶栏后默认左看右看并保持朝前趴窗姿态；之后按设定间隔随机播放上方勾选的独立特效。" TextWrapping="Wrap" FontSize="11" Foreground="#666" />
                     </StackPanel>
                 </GroupBox>
 
@@ -111,8 +162,8 @@
         <DockPanel Grid.Row="1" Margin="0,10,0,0">
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
                 <Button Content="恢复默认" Padding="10,4" Margin="0,0,6,0" Click="Reset_Click" />
-                <Button Content="🐾 预览爬顶" Padding="10,4" Margin="0,0,6,0" Click="PreviewClimb_Click" />
-                <Button Content="⚡ 预览闪身步" Padding="10,4" Click="PreviewFlash_Click" />
+                <Button Content="👀 预览趴窗" Padding="10,4" Margin="0,0,6,0" Click="PreviewPeek_Click" />
+                <Button Content="⚡ 闪身步" Padding="10,4" Click="PlayEffect_Click" Tag="FlashStep" />
             </StackPanel>
             <Button Content="完成" Padding="16,4" IsDefault="True" HorizontalAlignment="Right" Click="Close_Click" />
         </DockPanel>

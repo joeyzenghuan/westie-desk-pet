@@ -10,12 +10,12 @@ public enum TennisDifficulty
 
 public static class TennisDifficultyExtensions
 {
-    public static string DisplayName(this TennisDifficulty diff, PetSpecies species) => (diff, species) switch
+    public static string DisplayName(this TennisDifficulty diff, PetSpecies species) => (diff, species.IsCat()) switch
     {
-        (TennisDifficulty.Casual, PetSpecies.Westie) => "休闲小狗",
-        (TennisDifficulty.Pro, PetSpecies.Westie) => "网球狗王",
-        (TennisDifficulty.Casual, PetSpecies.GoldenCat) => "休闲小猫",
-        (TennisDifficulty.Pro, PetSpecies.GoldenCat) => "网球猫王",
+        (TennisDifficulty.Casual, false) => "休闲小狗",
+        (TennisDifficulty.Pro, false) => "网球狗王",
+        (TennisDifficulty.Casual, true) => "休闲小猫",
+        (TennisDifficulty.Pro, true) => "网球猫王",
         _ => "休闲小狗"
     };
 }

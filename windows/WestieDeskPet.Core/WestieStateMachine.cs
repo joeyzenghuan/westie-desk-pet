@@ -5,15 +5,21 @@ namespace WestieDeskPet.Core;
 public enum PetSpecies
 {
     Westie,
-    GoldenCat
+    GoldenCat,
+    Labrador,
+    Chinchilla
 }
 
 public static class PetSpeciesExtensions
 {
+    public static bool IsCat(this PetSpecies sp) => sp is PetSpecies.GoldenCat or PetSpecies.Chinchilla;
+
     public static string DisplayName(this PetSpecies sp) => sp switch
     {
         PetSpecies.Westie => "🐶 西高地小狗",
         PetSpecies.GoldenCat => "🐱 金渐层小猫",
+        PetSpecies.Labrador => "🐕 拉布拉多小狗",
+        PetSpecies.Chinchilla => "🐈 金吉拉小猫",
         _ => "🐶 西高地小狗"
     };
 
@@ -21,33 +27,58 @@ public static class PetSpeciesExtensions
     {
         PetSpecies.Westie => "西高地",
         PetSpecies.GoldenCat => "金渐层",
+        PetSpecies.Labrador => "拉布拉多",
+        PetSpecies.Chinchilla => "金吉拉",
         _ => "西高地"
     };
 }
 
-public enum TopClimbRoutine
+public enum TopBarEffect
 {
-    ClassicStory,
+    Patrol,
     FlashStep,
-    Random
+    BearShake,
+    WandererKick,
+    HeadTilt,
+    WindowRoll,
+    YawnSleep
 }
 
-public static class TopClimbRoutineExtensions
+public static class TopBarEffectExtensions
 {
-    public static string DisplayName(this TopClimbRoutine rt) => rt switch
+    public static readonly TopBarEffect[] DefaultSelection =
+    [
+        TopBarEffect.Patrol,
+        TopBarEffect.FlashStep,
+        TopBarEffect.BearShake,
+        TopBarEffect.WandererKick,
+        TopBarEffect.HeadTilt,
+        TopBarEffect.WindowRoll,
+        TopBarEffect.YawnSleep
+    ];
+
+    public static string DisplayName(this TopBarEffect effect) => effect switch
     {
-        TopClimbRoutine.ClassicStory => "🐾 悠闲巡逻 (跳走+张望+打哈欠)",
-        TopClimbRoutine.FlashStep => "⚡ 闪身步 (起势→右闪→停→准备→左闪)",
-        TopClimbRoutine.Random => "🎲 随机轮换",
-        _ => "🐾 悠闲巡逻"
+        TopBarEffect.Patrol => "🐾 跳走巡逻",
+        TopBarEffect.FlashStep => "⚡ 闪身步",
+        TopBarEffect.BearShake => "🐻 狗熊哆嗦毛",
+        TopBarEffect.WandererKick => "⚽ 浪子踢球",
+        TopBarEffect.HeadTilt => "🥺 歪头杀",
+        TopBarEffect.WindowRoll => "🌀 翻肚皮打滚",
+        TopBarEffect.YawnSleep => "😴 打哈欠睡觉",
+        _ => "🐾 跳走巡逻"
     };
 
-    public static string ShortLabel(this TopClimbRoutine rt) => rt switch
+    public static string ShortLabel(this TopBarEffect effect) => effect switch
     {
-        TopClimbRoutine.ClassicStory => "悠闲巡逻",
-        TopClimbRoutine.FlashStep => "闪身步",
-        TopClimbRoutine.Random => "随机轮换",
-        _ => "悠闲巡逻"
+        TopBarEffect.Patrol => "跳走巡逻",
+        TopBarEffect.FlashStep => "闪身步",
+        TopBarEffect.BearShake => "狗熊哆嗦毛",
+        TopBarEffect.WandererKick => "浪子踢球",
+        TopBarEffect.HeadTilt => "歪头杀",
+        TopBarEffect.WindowRoll => "翻肚皮打滚",
+        TopBarEffect.YawnSleep => "打哈欠睡觉",
+        _ => "跳走巡逻"
     };
 }
 
@@ -182,32 +213,48 @@ public enum StealthPhaseKind
 
 public enum TopStoryStepKind
 {
+    RisingToFullBody,
     PostClimbPause,
     HopLeft,
     LookAroundPause,
     WalkRight,
     PostWalkPause,
     FlashStep,
-    SmileSit,
-    PreYawnWait
+    BearShake,
+    WandererKick,
+    HeadTilt,
+    BellyRoll,
+    SmileSit
+}
+
+public enum BellyRollPhaseKind
+{
+    FlopDown,
+    WaitingBellyUp,
+    RollingOver,
+    StandingUp
 }
 
 public enum FlashStepBeatKind
 {
-    Stance,
-    DodgeRight,
-    StopMid,
-    ReadyLeft,
-    DodgeLeft,
-    FinishStop
+    HoldStart,
+    PopLeft,
+    SplitFeintLeft,
+    GlideWideLeft,
+    SnapCloseLeft,
+    StatueFreezeLeft,
+    PopRight,
+    SplitFeintRight,
+    GlideWideRight,
+    SnapCloseRight,
+    StatueFinish
 }
 
 public sealed record StealthDestination(
     PerchZone PerchZone,
     double TargetX = 0,
     double TargetY = 0,
-    bool ClimbToGreet = false,
-    TopClimbRoutine? RoutineOverride = null);
+    TopBarEffect? EffectOnArrival = null);
 
 public sealed class PendingWindowSwitch
 {
