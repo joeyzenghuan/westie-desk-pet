@@ -103,6 +103,7 @@ public sealed class TennisMatchEngine
             {
                 PetSpecies.GoldenCat => "金渐层 🐱",
                 PetSpecies.Chinchilla => "金吉拉 🐈",
+                PetSpecies.SilverChinchilla => "银白金吉拉 ❄️",
                 PetSpecies.Labrador => "拉布拉多 🐕",
                 _ => "西高地 🐶"
             };
@@ -545,6 +546,7 @@ public sealed class TennisMatchEngine
                 {
                     PetSpecies.GoldenCat => $"🐱 金渐层获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面",
                     PetSpecies.Chinchilla => $"🐈 金吉拉获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面",
+                    PetSpecies.SilverChinchilla => $"❄️ 银白金吉拉获胜 ({OpponentScore} : {PlayerScore}) 喵呜！左键/R 再战 · ESC 回桌面",
                     PetSpecies.Labrador => $"🐕 拉布拉多获胜 ({OpponentScore} : {PlayerScore}) 汪汪！左键/R 再战 · ESC 回桌面",
                     _ => $"🐶 西高地获胜 ({OpponentScore} : {PlayerScore}) 汪汪！左键/R 再战 · ESC 回桌面"
                 };

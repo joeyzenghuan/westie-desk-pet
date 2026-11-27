@@ -31,6 +31,8 @@ public enum SelfTestRunner {
         expect(missingLab.isEmpty, "All \(totalExpected) Cream-Yellow Labrador sprites (100% parity across all effects & tennis) resolve from bundle (missing: \(missingLab.map { $0.resourceName(for: .labrador) }))")
         let missingChinchilla = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .chinchilla) }
         expect(missingChinchilla.isEmpty, "All \(totalExpected) Silver Chinchilla Persian cat sprites (100% parity across all effects & tennis) resolve from bundle (missing: \(missingChinchilla.map { $0.resourceName(for: .chinchilla) }))")
+        let missingSilverChin = SpriteAssetKey.allCases.filter { !SpriteBank.shared.hasRealSprite(for: $0, species: .silverChinchilla) }
+        expect(missingSilverChin.isEmpty, "All \(totalExpected) Friend's Silver-White Chinchilla sprites (100% parity across all effects & tennis) resolve from bundle (missing: \(missingSilverChin.map { $0.resourceName(for: .silverChinchilla) }))")
 
         // 2. Window Platform Occlusion & Dock Fallback
         let screen = CGRect(x: 0, y: 60, width: 1440, height: 840)

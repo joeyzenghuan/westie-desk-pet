@@ -19,6 +19,8 @@ public final class DesktopScene: SKScene {
 
     public var onModeChanged: ((AppInteractionMode) -> Void)?
     public var onPreferredFPSChanged: ((Int) -> Void)?
+    /// Called during drag/drop to migrate `OverlayPanel` seamlessly across monitors and return the live cursor point in current scene coordinates.
+    public var onEnsureScreenForGlobalDrag: (() -> CGPoint?)?
 
     private let windowTracker = WindowPlatformTracker()
     public var targetScreen: NSScreen?
@@ -303,22 +305,29 @@ public final class DesktopScene: SKScene {
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        let pt = event.location(in: self)
         if mode == .tennis {
-            tennis.handleMouseMoved(scenePoint: pt)
+            tennis.handleMouseMoved(scenePoint: event.location(in: self))
         } else if isActivelyInteractingWithDog {
-            companion.handleMouseDragged(to: pt)
+            let livePt = onEnsureScreenForGlobalDrag?() ?? event.location(in: self)
+            companion.handleMouseDragged(to: livePt)
         }
     }
 
     public override func mouseUp(with event: NSEvent) {
-        let pt = event.location(in: self)
         if mode == .tennis {
-            tennis.handleLeftMouseUp(scenePoint: pt)
+            tennis.handleLeftMouseUp(scenePoint: event.location(in: self))
         } else if isActivelyInteractingWithDog {
+            let livePt = onEnsureScreenForGlobalDrag?() ?? event.location(in: self)
             refreshWindowSnapshot()
-            companion.handleMouseUp(at: pt, snapshot: latestSnapshot, sceneSize: size)
+            companion.handleMouseUp(at: livePt, snapshot: latestSnapshot, sceneSize: size)
         }
+    }
+
+    /// Completes a cross-monitor drop driven by the hardware pointer watcher if AppKit dropped `mouseUp` during screen handoff.
+    public func finishGlobalDragDrop(atScenePoint scenePoint: CGPoint) {
+        guard mode == .companion, isActivelyInteractingWithDog else { return }
+        refreshWindowSnapshot()
+        companion.handleMouseUp(at: scenePoint, snapshot: latestSnapshot, sceneSize: size)
     }
 
     public override func rightMouseDown(with event: NSEvent) {

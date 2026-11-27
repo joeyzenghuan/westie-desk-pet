@@ -79,10 +79,10 @@ private struct CompanionPreferencesView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("当前桌面宠物", selection: $preferences.petSpecies) {
                         ForEach(PetSpecies.allCases) { sp in
-                            Text(sp.shortName).tag(sp)
+                            Text(sp.displayName).tag(sp)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
 
                     HStack {
                         Text("宠物尺寸")

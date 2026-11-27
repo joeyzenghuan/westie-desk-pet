@@ -715,6 +715,26 @@ public sealed class CompanionEngine
         Position = new Vec2(scenePoint.X + offX, scenePoint.Y + offY);
     }
 
+    /// Seamlessly carries an active scruff-drag onto a new monitor's local coordinate space!
+    public void ContinueDragOnNewScreen(Vec2 newScenePoint)
+    {
+        if (!IsPointerDownOnDog && StateKind != CompanionStateKind.Dragged) return;
+        IsPointerDownOnDog = true;
+        StateKind = CompanionStateKind.Dragged;
+        PendingWindowSwitch = null;
+        CurrentPlatform = null;
+        CurrentRightAnchor = null;
+        TrackedWindowId = 0;
+        _hasTreatProp = false;
+        _dragGrabOffset = new Vec2(0, -22);
+        _dragBlendProgress = 1.0;
+        _lastDragScenePoint = newScenePoint;
+        _smoothedDragVelocityX = 0;
+        _swingRotationSpring.Target = 0;
+        Position = new Vec2(newScenePoint.X, newScenePoint.Y - 22);
+        SyncVisuals(0);
+    }
+
     public void HandleMouseUp(Vec2 scenePoint, ActiveWorkspaceSnapshot? snapshot, Size2D sceneSize)
     {
         if (!IsPointerDownOnDog && StateKind != CompanionStateKind.Dragged) return;

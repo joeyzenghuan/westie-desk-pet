@@ -84,8 +84,13 @@ public sealed class CoreEngineTests
             .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.Chinchilla) + ".png")))
             .ToList();
         Assert.Empty(missingChinchilla);
+        var missingSilverChin = SpriteAssetCatalog.AllKeys
+            .Where(k => !File.Exists(Path.Combine(spritesDir, SpriteAssetCatalog.GetResourceName(k, PetSpecies.SilverChinchilla) + ".png")))
+            .ToList();
+        Assert.Empty(missingSilverChin);
         Assert.Equal("dried_fish_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.GoldenCat));
         Assert.Equal("dried_fish_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.Chinchilla));
+        Assert.Equal("dried_fish_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.SilverChinchilla));
         Assert.Equal("bone_treat", SpriteAssetCatalog.GetResourceName(SpriteAssetKey.BoneTreat, PetSpecies.Labrador));
     }
 

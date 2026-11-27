@@ -34,11 +34,12 @@ def load_api_key(config_ini: str | None) -> tuple[str, str]:
         cfg = configparser.ConfigParser()
         cfg.read(config_ini)
         if "AOAIEndpoints" in cfg and cfg["AOAIEndpoints"]:
-            first_name = next(iter(cfg["AOAIEndpoints"]))
+            preferred = os.environ.get("AZURE_OPENAI_RESOURCE_NAME", "").strip()
+            target_name = preferred if (preferred and preferred in cfg["AOAIEndpoints"]) else next(iter(cfg["AOAIEndpoints"]))
             if not endpoint:
-                endpoint = f"https://{first_name}.openai.azure.com"
+                endpoint = f"https://{target_name}.openai.azure.com"
             if not api_key:
-                api_key = cfg["AOAIEndpoints"][first_name].strip()
+                api_key = cfg["AOAIEndpoints"][target_name].strip()
     if not api_key or not endpoint:
         raise RuntimeError(
             "Missing Azure OpenAI endpoint or API key. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY, "

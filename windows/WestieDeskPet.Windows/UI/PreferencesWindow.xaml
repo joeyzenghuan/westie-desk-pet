@@ -23,8 +23,9 @@
                         <UniformGrid Columns="2" Margin="0,0,0,10">
                             <RadioButton x:Name="WestieRadio" Content="🐶 西高地小狗" Margin="0,0,12,6" Checked="PetSpeciesRadio_Changed" />
                             <RadioButton x:Name="CatRadio" Content="🐱 金渐层小猫" Margin="0,0,0,6" Checked="PetSpeciesRadio_Changed" />
-                            <RadioButton x:Name="LabradorRadio" Content="🐕 拉布拉多小狗" Margin="0,0,12,0" Checked="PetSpeciesRadio_Changed" />
-                            <RadioButton x:Name="ChinchillaRadio" Content="🐈 金吉拉小猫" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="LabradorRadio" Content="🐕 拉布拉多小狗" Margin="0,0,12,6" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="ChinchillaRadio" Content="🐈 金吉拉小猫" Margin="0,0,0,6" Checked="PetSpeciesRadio_Changed" />
+                            <RadioButton x:Name="SilverChinchillaRadio" Content="❄️ 银白金吉拉" Checked="PetSpeciesRadio_Changed" />
                         </UniformGrid>
 
                         <DockPanel Margin="0,0,0,4">

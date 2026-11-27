@@ -198,6 +198,11 @@ public final class OverlayWindowController {
             self?.applyInteractionMode(mode)
         }
 
+        scene.onEnsureScreenForGlobalDrag = { [weak self] in
+            guard let self else { return nil }
+            return self.syncCrossMonitorDragAndScenePoint()
+        }
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -265,6 +270,10 @@ public final class OverlayWindowController {
         let activeScreen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) })
             ?? NSScreen.main
         guard let screen = activeScreen else { return }
+        realignToScreen(screen)
+    }
+
+    private func realignToScreen(_ screen: NSScreen, preserveDragAt globalMouse: CGPoint? = nil) {
         scene.targetScreen = screen
         let targetFPS = max(60, screen.maximumFramesPerSecond)
         if skView.preferredFramesPerSecond != targetFPS {
@@ -277,11 +286,27 @@ public final class OverlayWindowController {
             scene.size = screen.frame.size
         }
         panel.orderFrontRegardless()
+        if let globalMouse, frameChanged {
+            let newScenePt = scenePointForGlobalMouse(globalMouse)
+            scene.companion.continueDragOnNewScreen(at: newScenePt)
+        }
         if frameChanged {
             // Moving an SKView across multi-monitor displays on macOS 15/26 can leave its internal
             // DisplayLink bound to the old display or silently stopped; bounce `isPaused` to rebind cleanly!
-            reviveSpriteKitRenderLoop(reason: "realignToCurrentScreen")
+            reviveSpriteKitRenderLoop(reason: globalMouse != nil ? "crossMonitorDrag" : "realignToCurrentScreen")
         }
+    }
+
+    /// Migrates `panel` seamlessly to whichever display currently contains the dragged cursor,
+    /// returning the cursor's exact local scene coordinates on that display!
+    private func syncCrossMonitorDragAndScenePoint() -> CGPoint {
+        let globalMouse = NSEvent.mouseLocation
+        if let hoverScreen = NSScreen.screens.first(where: { NSMouseInRect(globalMouse, $0.frame, false) }),
+           panel.frame != hoverScreen.frame
+        {
+            realignToScreen(hoverScreen, preserveDragAt: globalMouse)
+        }
+        return scenePointForGlobalMouse(globalMouse)
     }
 
     private func reviveSpriteKitRenderLoop(reason: String) {
@@ -451,6 +476,19 @@ public final class OverlayWindowController {
         }
 
         let globalMouse = NSEvent.mouseLocation
+        // Seamless cross-monitor drag tracking & drop fallback:
+        // If the user is carrying the pet across display boundaries, migrate `panel` immediately onto the
+        // new screen and keep feeding live coordinates (or complete drop if left button was already released!).
+        if scene.isActivelyInteractingWithDog {
+            let livePt = syncCrossMonitorDragAndScenePoint()
+            let isLeftStillDown = ((NSEvent.pressedMouseButtons & 1) != 0)
+                || CGEventSource.buttonState(.combinedSessionState, button: .left)
+            if isLeftStillDown {
+                scene.companion.handleMouseDragged(to: livePt)
+            } else {
+                scene.finishGlobalDragDrop(atScenePoint: livePt)
+            }
+        }
         let scenePt = scenePointForGlobalMouse(globalMouse)
         let shouldCapture = scene.updatePointerCaptureAndHover(atScenePoint: scenePt)
         if panel.ignoresMouseEvents == shouldCapture {

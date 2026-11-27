@@ -53,6 +53,7 @@ public partial class OverlayWindow : Window
     private double _lastFrameSeconds;
     private double _fullSnapshotTimer;
     private double _monitorCheckTimer;
+    private IntPtr _lastForegroundHwnd;
     private Vec2? _lastPointerScenePt;
     private double _lastPointerSampleTime;
     private double _smoothedPointerSpeed;
@@ -288,19 +289,25 @@ public partial class OverlayWindow : Window
 
         if (Mode == AppInteractionMode.Companion)
         {
-            // Periodically check if active monitor changed (multi-monitor support!)
+            // Only switch monitors automatically when the active foreground window actually changes
+            // (so explicitly dragging the pet onto a secondary monitor keeps it pinned there!).
             _monitorCheckTimer -= dt;
             if (_monitorCheckTimer <= 0 && !Companion.IsPointerDownOnDog && Companion.StateKind != CompanionStateKind.Dragged)
             {
                 _monitorCheckTimer = 0.45;
-                var activeMon = WindowsPlatformTracker.GetMonitorForForegroundOrCursor();
-                if (activeMon.Handle != _currentMonitor.Handle ||
-                    activeMon.PhysicalMonitor.Width != _currentMonitor.PhysicalMonitor.Width ||
-                    activeMon.PhysicalMonitor.Height != _currentMonitor.PhysicalMonitor.Height ||
-                    Math.Abs(activeMon.DpiScaleX - _currentMonitor.DpiScaleX) > 0.01)
+                IntPtr fgHwnd = Win32Api.GetForegroundWindow();
+                if (fgHwnd != IntPtr.Zero && fgHwnd != _hwnd && fgHwnd != _lastForegroundHwnd)
                 {
-                    AlignWindowToMonitor(activeMon);
-                    _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
+                    _lastForegroundHwnd = fgHwnd;
+                    var activeMon = WindowsPlatformTracker.GetMonitorForForegroundOrCursor();
+                    if (activeMon.Handle != _currentMonitor.Handle ||
+                        activeMon.PhysicalMonitor.Width != _currentMonitor.PhysicalMonitor.Width ||
+                        activeMon.PhysicalMonitor.Height != _currentMonitor.PhysicalMonitor.Height ||
+                        Math.Abs(activeMon.DpiScaleX - _currentMonitor.DpiScaleX) > 0.01)
+                    {
+                        AlignWindowToMonitor(activeMon);
+                        _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
+                    }
                 }
             }
 
@@ -527,32 +534,48 @@ public partial class OverlayWindow : Window
         }
     }
 
+    private Vec2 SyncCrossMonitorDragAndScenePoint()
+    {
+        Win32Api.GetCursorPos(out var physPt);
+        var cursorMon = WindowsPlatformTracker.GetActiveMonitorForCursor();
+        if (cursorMon.Handle != _currentMonitor.Handle)
+        {
+            AlignWindowToMonitor(cursorMon);
+            var newPt = _currentMonitor.CursorPhysicalToLocalBottomLeftDip(physPt);
+            Companion.ContinueDragOnNewScreen(newPt);
+            _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
+            return newPt;
+        }
+        return _currentMonitor.CursorPhysicalToLocalBottomLeftDip(physPt);
+    }
+
     private void OnWindowMouseMove(object sender, WpfMouseEventArgs e)
     {
-        var pt = MouseEventToBottomLeftScene(e);
         if (Mode == AppInteractionMode.Tennis)
         {
-            Tennis.HandleMouseMoved(SceneToTennisCourt(pt));
+            Tennis.HandleMouseMoved(SceneToTennisCourt(MouseEventToBottomLeftScene(e)));
         }
         else if (Companion.IsPointerDownOnDog || Companion.StateKind == CompanionStateKind.Dragged)
         {
+            var pt = SyncCrossMonitorDragAndScenePoint();
             Companion.HandleMouseDragged(pt);
         }
     }
 
     private void OnWindowMouseLeftUp(object sender, MouseButtonEventArgs e)
     {
-        var pt = MouseEventToBottomLeftScene(e);
         if (Mode == AppInteractionMode.Tennis)
         {
-            Tennis.HandleLeftMouseUp(SceneToTennisCourt(pt));
+            Tennis.HandleLeftMouseUp(SceneToTennisCourt(MouseEventToBottomLeftScene(e)));
             return;
         }
 
         if (IsMouseCaptured) ReleaseMouseCapture();
         if (Companion.IsPointerDownOnDog || Companion.StateKind == CompanionStateKind.Dragged)
         {
+            var pt = SyncCrossMonitorDragAndScenePoint();
             _latestSnapshot = _windowTracker.CaptureSnapshot(_currentMonitor);
+            _lastForegroundHwnd = Win32Api.GetForegroundWindow();
             Companion.HandleMouseUp(pt, _latestSnapshot, _currentMonitor.SizeDip);
         }
     }
@@ -886,16 +909,17 @@ public partial class OverlayWindow : Window
 
         var hintLabel = new TextBlock
         {
-            Width = 600,
-            Text = "WASD 移动 | 双击/Space 冲刺 | 左键平击/蓄力上旋 | 右键小球/高吊 | [-][+] 调速 | ESC 退出",
+            Width = 500,
+            Text = "WASD 移动(双击/空格冲刺) · 鼠标瞄准 · 左键击球/长按上旋\n右键小球/高吊 · [-/+] 调球速 · R 重开 · ESC 收起",
             TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
             FontFamily = new System.Windows.Media.FontFamily("Consolas, Microsoft YaHei UI"),
-            FontSize = 11.5,
-            Foreground = new SolidColorBrush(WpfColor.FromArgb(215, 232, 246, 238)),
+            FontSize = 10.5,
+            Foreground = new SolidColorBrush(WpfColor.FromArgb(220, 232, 246, 238)),
             IsHitTestVisible = false
         };
-        Canvas.SetLeft(hintLabel, -300);
-        Canvas.SetTop(hintLabel, ah + 12);
+        Canvas.SetLeft(hintLabel, -250);
+        Canvas.SetTop(hintLabel, ah + 6);
         _courtOrigin.Children.Add(hintLabel);
 
         // Top Interactive Pills

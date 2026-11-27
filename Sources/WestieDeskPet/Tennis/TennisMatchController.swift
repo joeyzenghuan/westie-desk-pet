@@ -106,6 +106,7 @@ public final class TennisMatchController {
         case .goldenCat: return "🐱 金渐层"
         case .labrador: return "🐕 拉布拉多"
         case .chinchilla: return "🐈 金吉拉"
+        case .silverChinchilla: return "❄️ 银白金吉拉"
         }
     }
 
@@ -167,9 +168,12 @@ public final class TennisMatchController {
         bannerLabel.zPosition = 15
 
         hintLabel = SKLabelNode(fontNamed: "Menlo")
-        hintLabel.fontSize = 11.2
+        hintLabel.fontSize = 10.5
         hintLabel.fontColor = NSColor(calibratedWhite: 0.94, alpha: 0.92)
-        hintLabel.text = "WASD 移动(双击冲刺) · 鼠标瞄准 · 左键击球/长按上旋 · 右键小球/高吊 · [-/+] 调球速 · R 重开 · ESC 收起"
+        hintLabel.numberOfLines = 2
+        hintLabel.horizontalAlignmentMode = .center
+        hintLabel.verticalAlignmentMode = .center
+        hintLabel.text = "WASD 移动(双击/空格冲刺) · 鼠标瞄准 · 左键击球/长按上旋\n右键小球/高吊 · [-/+] 调球速 · R 重开 · ESC 收起"
         hintLabel.zPosition = 12
 
         exitButtonNode = Self.buildPillButton(title: "✕ 收起球场 (ESC)", width: 136, fill: NSColor(calibratedRed: 0.22, green: 0.24, blue: 0.28, alpha: 0.92))
@@ -201,7 +205,7 @@ public final class TennisMatchController {
 
         scoreLabel.position = CGPoint(x: 0, y: TennisCourtMetrics.apronMaxY + 14)
         bannerLabel.position = CGPoint(x: 0, y: 42)
-        hintLabel.position = CGPoint(x: 0, y: -TennisCourtMetrics.apronMaxY - 24)
+        hintLabel.position = CGPoint(x: 0, y: -TennisCourtMetrics.apronMaxY - 21)
         difficultyButtonNode.position = CGPoint(x: -158, y: TennisCourtMetrics.apronMaxY + 48)
         speedButtonNode.position = CGPoint(x: 0, y: TennisCourtMetrics.apronMaxY + 48)
         exitButtonNode.position = CGPoint(x: 158, y: TennisCourtMetrics.apronMaxY + 48)
@@ -657,6 +661,8 @@ public final class TennisMatchController {
                     winText = "🐱 金渐层获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
                 case .chinchilla:
                     winText = "🐈 金吉拉获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
+                case .silverChinchilla:
+                    winText = "❄️ 银白金吉拉获胜 (\(westieScore) : \(playerScore)) 喵呜！左键/R 再战 · ESC 回桌面"
                 case .labrador:
                     winText = "🐕 拉布拉多获胜 (\(westieScore) : \(playerScore)) 汪汪！左键/R 再战 · ESC 回桌面"
                 case .westie:
@@ -738,6 +744,7 @@ public final class TennisMatchController {
         case .goldenCat: petText = "金渐层 🐱"
         case .labrador: petText = "拉布拉多 🐕"
         case .chinchilla: petText = "金吉拉 🐈"
+        case .silverChinchilla: petText = "银白金吉拉 ❄️"
         }
         scoreLabel.text = "🧑 你  \(playerScore)  :  \(westieScore)  \(petText)   |   回合 \(rallyHits)"
     }

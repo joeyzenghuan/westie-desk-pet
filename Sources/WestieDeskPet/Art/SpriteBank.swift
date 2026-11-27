@@ -130,6 +130,17 @@ public enum SpriteAssetKey: String, CaseIterable, Sendable {
                 return "dried_fish_treat"
             }
             return rawValue
+        case .silverChinchilla:
+            if rawValue.hasPrefix("westie_") {
+                return "chinchilla2_" + rawValue.dropFirst("westie_".count)
+            }
+            if self == .badgeIcon {
+                return "chinchilla2_badge_icon"
+            }
+            if self == .boneTreat {
+                return "dried_fish_treat"
+            }
+            return rawValue
         }
     }
 

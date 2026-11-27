@@ -718,6 +718,26 @@ public final class CompanionController {
         position = CGPoint(x: scenePoint.x + blendedOffset.x, y: scenePoint.y + blendedOffset.y)
     }
 
+    /// Seamlessly carries an active scruff-drag onto a new monitor's local scene coordinate space!
+    public func continueDragOnNewScreen(at newScenePoint: CGPoint) {
+        guard isPointerDownOnDog || state == .dragged else { return }
+        isPointerDownOnDog = true
+        state = .dragged
+        pendingWindowSwitch = nil
+        currentPlatform = nil
+        currentRightAnchor = nil
+        trackedWindowID = 0
+        treatNode?.removeFromParent()
+        treatNode = nil
+        dragGrabOffset = CGPoint(x: 0, y: -22)
+        dragBlendProgress = 1.0
+        lastDragScenePoint = newScenePoint
+        smoothedDragVelocityX = 0
+        swingRotationSpring.target = 0
+        position = CGPoint(x: newScenePoint.x, y: newScenePoint.y - 22)
+        syncVisuals(dt: 0)
+    }
+
     public func handleMouseUp(at scenePoint: CGPoint, snapshot: ActiveWorkspaceSnapshot?, sceneSize: CGSize) {
         guard isPointerDownOnDog || state == .dragged else { return }
         let wasDragging = (state == .dragged)

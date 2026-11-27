@@ -62,6 +62,7 @@ public final class MenuBarController: NSObject {
             switch species {
             case .goldenCat: button.title = "🐱🎾"
             case .chinchilla: button.title = "🐈🎾"
+            case .silverChinchilla: button.title = "❄️🎾"
             case .labrador: button.title = "🐕🎾"
             case .westie: button.title = "🐶🎾"
             }

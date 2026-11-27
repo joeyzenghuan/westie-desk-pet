@@ -6,11 +6,12 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
     case goldenCat = "goldenCat"
     case labrador = "labrador"
     case chinchilla = "chinchilla"
+    case silverChinchilla = "silverChinchilla"
 
     public var id: String { rawValue }
 
     public var isCat: Bool {
-        self == .goldenCat || self == .chinchilla
+        self == .goldenCat || self == .chinchilla || self == .silverChinchilla
     }
 
     public var displayName: String {
@@ -19,6 +20,7 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
         case .goldenCat: return "🐱 金渐层小猫"
         case .labrador: return "🐕 拉布拉多小狗"
         case .chinchilla: return "🐈 金吉拉小猫"
+        case .silverChinchilla: return "❄️ 银白金吉拉"
         }
     }
 
@@ -28,6 +30,7 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
         case .goldenCat: return "金渐层"
         case .labrador: return "拉布拉多"
         case .chinchilla: return "金吉拉"
+        case .silverChinchilla: return "银白金吉拉"
         }
     }
 
@@ -37,6 +40,7 @@ public enum PetSpecies: String, CaseIterable, Identifiable, Sendable {
         case .goldenCat: return "cat_"
         case .labrador: return "lab_"
         case .chinchilla: return "chinchilla_"
+        case .silverChinchilla: return "chinchilla2_"
         }
     }
 }

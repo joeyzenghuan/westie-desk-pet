@@ -215,6 +215,17 @@ public static class SpriteAssetCatalog
             return raw;
         }
 
+        if (species == PetSpecies.SilverChinchilla)
+        {
+            if (raw.StartsWith("westie_", StringComparison.Ordinal))
+                return "chinchilla2_" + raw["westie_".Length..];
+            if (key == SpriteAssetKey.BadgeIcon)
+                return "chinchilla2_badge_icon";
+            if (key == SpriteAssetKey.BoneTreat)
+                return "dried_fish_treat";
+            return raw;
+        }
+
         return raw;
     }
 }

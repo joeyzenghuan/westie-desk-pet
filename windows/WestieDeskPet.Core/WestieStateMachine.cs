@@ -7,12 +7,13 @@ public enum PetSpecies
     Westie,
     GoldenCat,
     Labrador,
-    Chinchilla
+    Chinchilla,
+    SilverChinchilla
 }
 
 public static class PetSpeciesExtensions
 {
-    public static bool IsCat(this PetSpecies sp) => sp is PetSpecies.GoldenCat or PetSpecies.Chinchilla;
+    public static bool IsCat(this PetSpecies sp) => sp is PetSpecies.GoldenCat or PetSpecies.Chinchilla or PetSpecies.SilverChinchilla;
 
     public static string DisplayName(this PetSpecies sp) => sp switch
     {
@@ -20,6 +21,7 @@ public static class PetSpeciesExtensions
         PetSpecies.GoldenCat => "🐱 金渐层小猫",
         PetSpecies.Labrador => "🐕 拉布拉多小狗",
         PetSpecies.Chinchilla => "🐈 金吉拉小猫",
+        PetSpecies.SilverChinchilla => "❄️ 银白金吉拉",
         _ => "🐶 西高地小狗"
     };
 
@@ -29,6 +31,7 @@ public static class PetSpeciesExtensions
         PetSpecies.GoldenCat => "金渐层",
         PetSpecies.Labrador => "拉布拉多",
         PetSpecies.Chinchilla => "金吉拉",
+        PetSpecies.SilverChinchilla => "银白金吉拉",
         _ => "西高地"
     };
 }

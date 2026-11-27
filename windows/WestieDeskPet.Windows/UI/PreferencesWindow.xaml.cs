@@ -46,6 +46,7 @@ public partial class PreferencesWindow : Window
             CatRadio.IsChecked = _prefs.PetSpecies == PetSpecies.GoldenCat;
             LabradorRadio.IsChecked = _prefs.PetSpecies == PetSpecies.Labrador;
             ChinchillaRadio.IsChecked = _prefs.PetSpecies == PetSpecies.Chinchilla;
+            SilverChinchillaRadio.IsChecked = _prefs.PetSpecies == PetSpecies.SilverChinchilla;
 
             ScaleSlider.Value = _prefs.DogScale;
             ScaleValueText.Text = CompanionPreferences.FormatScale(_prefs.DogScale);
@@ -130,6 +131,7 @@ public partial class PreferencesWindow : Window
         if (CatRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.GoldenCat;
         else if (LabradorRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.Labrador;
         else if (ChinchillaRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.Chinchilla;
+        else if (SilverChinchillaRadio.IsChecked == true) _prefs.PetSpecies = PetSpecies.SilverChinchilla;
         else _prefs.PetSpecies = PetSpecies.Westie;
     }
 
